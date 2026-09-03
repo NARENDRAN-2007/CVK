@@ -73,16 +73,14 @@ def compute_engineered_features(input_data: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
+CLEAN_RISK_THRESHOLD = float(os.getenv("RISK_THRESHOLD", "35.0"))
+
 def determine_carc_and_action(
     risk_score: float, 
     input_data: Dict[str, Any], 
     top_factors: List[Dict[str, Any]]
 ) -> tuple[str, str]:
-    """
-    Determines the most probable CARC code and concrete corrective action based on
-    risk score and dominant contributing SHAP factors.
-    """
-    if risk_score < 25.0:
+    if risk_score < CLEAN_RISK_THRESHOLD:
         return (
             "CLEAN",
             "Claim validation passed with low denial risk. Ready for clean EDI submission."

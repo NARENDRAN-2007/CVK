@@ -4,12 +4,12 @@ Strict typing for raw claim inputs, engineered features, prediction outputs, and
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import List, Optional, Literal, Any, Dict
 from pydantic import BaseModel, Field
 
 
 class ClaimInput(BaseModel):
-    # 20 Raw Input Features
     claim_id: Optional[str] = Field(
         default=None, 
         description="Unique claim identifier. If omitted, a unique ID will be auto-generated."
@@ -25,7 +25,7 @@ class ClaimInput(BaseModel):
     modifiers: str = Field(default="None", description="CPT modifier(s), e.g. 25, 59, LT, RT, None")
     pos_code: str = Field(..., description="Place of Service code, e.g. 11 (Office), 21 (Inpatient), 22 (Outpatient), 23 (ER), 02 (Telehealth)")
     units_billed: int = Field(default=1, ge=1, description="Number of units billed")
-    charge_amount: float = Field(..., gt=0, description="Total billed charge amount in USD")
+    charge_amount: Decimal = Field(..., gt=0, description="Total billed charge amount in USD")
     pa_status: str = Field(..., description="Prior Authorization status, e.g. Approved, Missing, Denied, Not Required, Pending")
     referral_status: str = Field(default="Not Required", description="Referral status, e.g. Active, Missing, Not Required, Expired")
     documentation_flag: bool = Field(..., description="True if required clinical documentation/notes are attached")
@@ -87,7 +87,7 @@ class ClaimLogRow(BaseModel):
     modifiers: Optional[str] = None
     pos_code: Optional[str] = None
     units_billed: Optional[int] = None
-    charge_amount: Optional[float] = None
+    charge_amount: Optional[Decimal] = None
     pa_status: Optional[str] = None
     referral_status: Optional[str] = None
     documentation_flag: Optional[bool] = None

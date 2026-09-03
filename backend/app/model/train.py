@@ -62,33 +62,29 @@ def train_model():
         raise FileNotFoundError(f"Final training CSV not found at {DATA_PATH}. Run impute_missing_fields.py first.")
 
     df = pd.read_csv(DATA_PATH)
-    print(f"Loaded {len(df)} records. Calculating historical lookup tables on final dataset...")
-
-    # Convert booleans to int for safe modeling
     df["documentation_flag"] = df["documentation_flag"].astype(int)
     df["cob_flag"] = df["cob_flag"].astype(int)
     df["denial_flag"] = df["denial_flag"].astype(int)
 
-    # 1. Compute Historical Lookups on the new dataset
-    global_denial_rate = float(df["denial_flag"].mean())
-    
-    # CPT + Payer denial rate lookup
-    cpt_payer_stats = df.groupby(["cpt_code", "payer"])["denial_flag"].agg(["mean", "count"]).reset_index()
+    train_df, test_df = train_test_split(
+        df, test_size=0.20, random_state=42, stratify=df["denial_flag"]
+    )
+
+    global_denial_rate = float(train_df["denial_flag"].mean())
+    cpt_payer_stats = train_df.groupby(["cpt_code", "payer"])["denial_flag"].agg(["mean", "count"]).reset_index()
     cpt_payer_lookup = {
         f"{row['cpt_code']}::{row['payer']}": float(row['mean'])
         for _, row in cpt_payer_stats.iterrows()
     }
 
-    # Provider Specialty + Payer denial rate lookup
-    provider_payer_stats = df.groupby(["provider_specialty", "payer"])["denial_flag"].agg(["mean", "count"]).reset_index()
+    provider_payer_stats = train_df.groupby(["provider_specialty", "payer"])["denial_flag"].agg(["mean", "count"]).reset_index()
     provider_payer_lookup = {
         f"{row['provider_specialty']}::{row['payer']}": float(row['mean'])
         for _, row in provider_payer_stats.iterrows()
     }
 
-    # CPT mean charge lookup
-    cpt_charge_stats = df.groupby("cpt_code")["charge_amount"].mean().to_dict()
-    global_mean_charge = float(df["charge_amount"].mean())
+    cpt_charge_stats = train_df.groupby("cpt_code")["charge_amount"].mean().to_dict()
+    global_mean_charge = float(train_df["charge_amount"].mean())
 
     feature_lookups = {
         "global_denial_rate": round(global_denial_rate, 4),
@@ -98,30 +94,26 @@ def train_model():
         "cpt_mean_charges": cpt_charge_stats,
     }
 
-    # 2. Add Engineered Features to dataset
-    df["hist_denial_rate_cpt_payer"] = df.apply(
-        lambda r: cpt_payer_lookup.get(f"{r['cpt_code']}::{r['payer']}", global_denial_rate),
-        axis=1
-    )
-    df["hist_denial_rate_provider_payer"] = df.apply(
-        lambda r: provider_payer_lookup.get(f"{r['provider_specialty']}::{r['payer']}", global_denial_rate),
-        axis=1
-    )
-    df["claim_amount_deviation"] = df.apply(
-        lambda r: round(r["charge_amount"] - cpt_charge_stats.get(r["cpt_code"], global_mean_charge), 2),
-        axis=1
-    )
+    for d in [train_df, test_df]:
+        d["hist_denial_rate_cpt_payer"] = d.apply(
+            lambda r: cpt_payer_lookup.get(f"{r['cpt_code']}::{r['payer']}", global_denial_rate),
+            axis=1
+        )
+        d["hist_denial_rate_provider_payer"] = d.apply(
+            lambda r: provider_payer_lookup.get(f"{r['provider_specialty']}::{r['payer']}", global_denial_rate),
+            axis=1
+        )
+        d["claim_amount_deviation"] = d.apply(
+            lambda r: round(r["charge_amount"] - cpt_charge_stats.get(r["cpt_code"], global_mean_charge), 2),
+            axis=1
+        )
 
     feature_columns = CATEGORICAL_FEATURES + NUMERICAL_FEATURES
-    X = df[feature_columns]
-    y = df["denial_flag"]
+    X_train = train_df[feature_columns]
+    y_train = train_df["denial_flag"]
+    X_test = test_df[feature_columns]
+    y_test = test_df["denial_flag"]
 
-    # 3. Train / Test Split (80/20 stratified)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, random_state=42, stratify=y
-    )
-
-    # 4. Fit Preprocessor (One-Hot Encoder for Categoricals, Passthrough for Numericals)
     preprocessor = ColumnTransformer(
         transformers=[
             (
@@ -138,14 +130,10 @@ def train_model():
         verbose_feature_names_out=False,
     )
 
-    print("Fitting preprocessor and transforming train/test sets...")
     X_train_encoded = preprocessor.fit_transform(X_train)
     X_test_encoded = preprocessor.transform(X_test)
-
     feature_names = list(preprocessor.get_feature_names_out())
 
-    # 5. Train XGBoost Classifier
-    print(f"Training XGBoost Classifier on {len(X_train)} samples...")
     neg_count = len(y_train) - sum(y_train)
     pos_count = max(1, sum(y_train))
     scale_pos = neg_count / pos_count
@@ -163,17 +151,35 @@ def train_model():
     )
     xgb_model.fit(X_train_encoded, y_train)
 
-    # 6. Evaluate on Held-out Test Set
-    print("Evaluating model performance on held-out test split...")
     y_pred_proba = xgb_model.predict_proba(X_test_encoded)[:, 1]
-    y_pred = (y_pred_proba >= 0.50).astype(int)
+    y_pred_default = (y_pred_proba >= 0.50).astype(int)
 
-    acc = float(accuracy_score(y_test, y_pred))
-    prec = float(precision_score(y_test, y_pred))
-    rec = float(recall_score(y_test, y_pred))
-    f1 = float(f1_score(y_test, y_pred))
+    acc = float(accuracy_score(y_test, y_pred_default))
+    prec = float(precision_score(y_test, y_pred_default, zero_division=0))
+    rec = float(recall_score(y_test, y_pred_default, zero_division=0))
+    f1 = float(f1_score(y_test, y_pred_default, zero_division=0))
     roc_auc = float(roc_auc_score(y_test, y_pred_proba))
-    cm = confusion_matrix(y_test, y_pred).tolist()
+    from sklearn.metrics import average_precision_score
+    pr_auc = float(average_precision_score(y_test, y_pred_proba))
+    cm = confusion_matrix(y_test, y_pred_default).tolist()
+
+    threshold_profiles = {}
+    for t in [0.25, 0.35, 0.50, 0.65]:
+        yp = (y_pred_proba >= t).astype(int)
+        c_mat = confusion_matrix(y_test, yp).tolist()
+        threshold_profiles[f"threshold_{int(t*100)}"] = {
+            "threshold": t,
+            "accuracy": round(float(accuracy_score(y_test, yp)), 4),
+            "precision": round(float(precision_score(y_test, yp, zero_division=0)), 4),
+            "recall": round(float(recall_score(y_test, yp, zero_division=0)), 4),
+            "f1_score": round(float(f1_score(y_test, yp, zero_division=0)), 4),
+            "confusion_matrix": {
+                "true_negatives": c_mat[0][0],
+                "false_positives": c_mat[0][1],
+                "false_negatives": c_mat[1][0],
+                "true_positives": c_mat[1][1],
+            }
+        }
 
     metrics = {
         "dataset_size": len(df),
@@ -183,23 +189,16 @@ def train_model():
         "recall": round(rec, 4),
         "f1_score": round(f1, 4),
         "roc_auc": round(roc_auc, 4),
+        "pr_auc": round(pr_auc, 4),
         "confusion_matrix": {
             "true_negatives": cm[0][0],
             "false_positives": cm[0][1],
             "false_negatives": cm[1][0],
             "true_positives": cm[1][1],
         },
+        "operating_thresholds": threshold_profiles
     }
 
-    print("\n--- RETRAINED MODEL PERFORMANCE METRICS ---")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1 Score:  {metrics['f1_score']:.4f}")
-    print(f"ROC AUC:   {metrics['roc_auc']:.4f}")
-    print(f"Confusion Matrix: {cm}")
-
-    # 7. Save Artifacts
     artifact = {
         "model": xgb_model,
         "preprocessor": preprocessor,
@@ -209,14 +208,10 @@ def train_model():
     }
 
     joblib.dump(artifact, MODEL_OUT_PATH)
-    print(f"Saved updated model artifact to {MODEL_OUT_PATH}")
-
     joblib.dump(feature_lookups, LOOKUPS_OUT_PATH)
-    print(f"Saved updated feature lookups to {LOOKUPS_OUT_PATH}")
 
     with open(METRICS_OUT_PATH, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"Saved fresh metrics to {METRICS_OUT_PATH}")
 
     return metrics
 

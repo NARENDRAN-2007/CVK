@@ -33,8 +33,8 @@ def submit_outcome_endpoint(
 
     if not updated_row:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Claim ID '{payload.claim_id}' not found in claims_log."
+            status_code=404,
+            detail="Claim ID not found"
         )
 
     return SubmitOutcomeResponse(

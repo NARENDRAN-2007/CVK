@@ -78,10 +78,11 @@ def update_claim_outcome(claim_id: str, actual_outcome: str, denial_flag: bool) 
 
             if response.data and len(response.data) > 0:
                 return response.data[0]
+            return None
         except Exception as e:
             logger.error(f"Supabase update error for claim {claim_id}: {e}")
+            return None
 
-    # Fallback to in-memory store if DB not available or in local dev
     for row in _in_memory_claims_log:
         if row.get("claim_id") == claim_id:
             row["actual_outcome"] = actual_outcome

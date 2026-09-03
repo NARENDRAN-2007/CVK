@@ -47,14 +47,18 @@ async def login(request: LoginRequest):
 
     if not user_record:
         raise HTTPException(status_code=401, detail="Invalid work email or password")
-        
+
     is_valid_password = (request.password == user_record.get("password") or 
                          verify_password(request.password, user_record.get("password_hash", "")))
                          
     if not is_valid_password:
         raise HTTPException(status_code=401, detail="Invalid work email or password")
 
-    token = create_access_token({"sub": request.work_email, "role": user_record["role"]})
+    token = create_access_token({
+        "sub": request.work_email,
+        "name": user_record["name"],
+        "role": user_record["role"]
+    })
     
     return {
         "access_token": token,

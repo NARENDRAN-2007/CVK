@@ -1,6 +1,6 @@
 # DenialGuard AI — Complete Backend Architecture & API Specification
 
-> **DenialGuard AI** is a production-grade AI/ML backend built with **FastAPI**, **XGBoost**, and **SHAP**. It predicts US healthcare claim denial probabilities (0–100%) prior to clearinghouse submission, isolates root causes using exact Shapley feature attribution, forecasts likely Claim Adjustment Reason Codes (CARC), suggests clinical/billing remediations, and provides JWT-authenticated audit logging backed by Supabase.
+> **DenialGuard AI** is a production-grade AI/ML revenue cycle intelligence backend built with **FastAPI**, **XGBoost**, and **SHAP**. It predicts US healthcare claim denial probabilities (0–100%) prior to clearinghouse submission, isolates exact root causes using TreeExplainer Shapley feature attribution, forecasts likely Claim Adjustment Reason Codes (CARC), generates targeted pre-submission clinical/billing remediations, and provides JWT-authenticated audit logging backed by Supabase with resilient zero-downtime offline fallbacks.
 
 ---
 
@@ -8,14 +8,14 @@
 
 ```mermaid
 graph TD
-    Client["Frontend Client / Manus UI / EHR"] -->|HTTP + JWT Bearer Token| Main["FastAPI App (app/main.py)"]
+    Client["Frontend Client / React Dashboard / EHR Integration"] -->|HTTP/REST + Bearer JWT| Main["FastAPI Gateway (app/main.py)"]
     
     subgraph Security Layer
         Main --> AuthMiddleware["CORS & HTTPBearer Security (app/core/deps.py)"]
-        AuthMiddleware --> SecurityUtil["JWT & Password Hash (app/core/security.py)"]
+        AuthMiddleware --> SecurityUtil["JWT HS256 & BCrypt Hashing (app/core/security.py)"]
     end
 
-    subgraph Routers
+    subgraph API Routers
         AuthMiddleware --> AuthRouter["/auth/login & /auth/me (app/routers/auth.py)"]
         AuthMiddleware --> PredictRouter["POST /predict (app/routers/predict.py)"]
         AuthMiddleware --> OutcomeRouter["POST /submit-outcome (app/routers/submit_outcome.py)"]
@@ -23,7 +23,7 @@ graph TD
         AuthMiddleware --> HealthRouter["GET /health (app/main.py)"]
     end
 
-    subgraph ML Engine
+    subgraph ML & Explainability Engine
         PredictRouter --> FeaturePipeline["Feature Engineering & Lookups (app/model/predict.py)"]
         FeaturePipeline --> XGBoost["XGBoost Classifier (model.pkl)"]
         FeaturePipeline --> SHAP["SHAP TreeExplainer"]
@@ -31,8 +31,8 @@ graph TD
         SHAP --> DecisionLogic
     end
 
-    subgraph Persistence Layer
-        AuthRouter --> DB["Supabase Client / Resilient Cache (app/db.py)"]
+    subgraph Persistence & Data Layer
+        AuthRouter --> DB["Supabase Client / Resilient Fallback (app/db.py)"]
         PredictRouter --> DB
         OutcomeRouter --> DB
         LogRouter --> DB
@@ -41,13 +41,15 @@ graph TD
     end
 ```
 
-### Core Technologies
-- **API Framework:** FastAPI `>=0.110.0`, Uvicorn `>=0.28.0`
-- **Machine Learning:** XGBoost `>=2.0.0`, Scikit-learn `>=1.4.0`, NumPy, Pandas
-- **Explainability:** SHAP `>=0.45.0` (`TreeExplainer` with margin link)
-- **Authentication:** PyJWT `>=2.8.0`, Passlib/BCrypt (HS256, 24-hour token expiry)
-- **Data Validation:** Pydantic v2 (`pydantic>=2.6.0`, `pydantic-settings>=2.2.0`)
-- **Database:** Supabase PostgreSQL (`supabase>=2.3.0`) + In-Memory Fallback Cache
+### Technology Stack
+| Layer | Technologies | Purpose |
+| :--- | :--- | :--- |
+| **API Framework** | FastAPI `>=0.110.0`, Uvicorn `>=0.28.0` | High-performance asynchronous REST API gateway |
+| **Machine Learning** | XGBoost `>=2.0.0`, Scikit-Learn `>=1.4.0`, NumPy, Pandas | Gradient-boosted decision trees trained on 120,000 claim records |
+| **Explainability** | SHAP `>=0.45.0` (`TreeExplainer`) | Exact per-claim Shapley attribution values & root-cause identification |
+| **Authentication & RBAC**| PyJWT `>=2.8.0`, Passlib/BCrypt | Stateless JWT Bearer tokens with 24-hour expiration & password hashing |
+| **Data Validation** | Pydantic v2 (`pydantic>=2.6.0`, `pydantic-settings>=2.2.0`) | Strict input/output payload validation and schema enforcement |
+| **Persistence** | Supabase PostgreSQL (`supabase>=2.3.0`) + In-Memory Fallback | Dual-mode persistence for cloud production or resilient offline operation |
 
 ---
 
@@ -57,58 +59,64 @@ graph TD
 backend/
 ├── app/
 │   ├── __init__.py               # App package initializer
-│   ├── main.py                   # FastAPI application entrypoint, CORS, router mounting, /health
-│   ├── db.py                     # Supabase client wrapper, user store, claims_log CRUD, offline fallback
-│   ├── schemas.py                # Strict Pydantic models for claim inputs, outputs, auth, and logs
+│   ├── main.py                   # FastAPI app entrypoint, CORS configuration, router mounting, /health
+│   ├── db.py                     # Supabase database client wrapper, user store, claims_log CRUD, offline fallback
+│   ├── schemas.py                # Strict Pydantic models for claim inputs, responses, auth, and logs
 │   ├── core/
-│   │   ├── __init__.py           # Core security package initializer
-│   │   ├── security.py           # JWT creation/decoding (HS256) & bcrypt password hashing
+│   │   ├── __init__.py           # Security package initializer
+│   │   ├── security.py           # JWT token generation, verification (HS256) & bcrypt password hashing
 │   │   └── deps.py               # FastAPI Depends(get_current_user) Bearer token validator
 │   ├── model/
 │   │   ├── __init__.py           # Model package initializer
-│   │   ├── train.py              # Synthetic training script (120,000 claim records)
-│   │   ├── predict.py            # Feature engineering, XGBoost inference, and SHAP explanation
-│   │   ├── model.pkl             # Serialized trained XGBoost model
-│   │   ├── feature_lookups.pkl   # Pre-computed historical denial priors & specialty deviations
-│   │   ├── metrics.json          # Production model evaluation metrics
+│   │   ├── train.py              # ML training pipeline on 120k records with cross-validation and metrics output
+│   │   ├── predict.py            # Feature engineering, XGBoost inference, and SHAP explanation engine
+│   │   ├── model.pkl             # Serialized production XGBoost model artifact (git-ignored)
+│   │   ├── feature_lookups.pkl   # Pre-computed historical denial priors & specialty benchmarks (git-ignored)
+│   │   ├── metrics.json          # Production model evaluation metrics (accuracy, F1, precision, recall, AUC)
 │   │   └── metrics_synthetic_baseline.json # Baseline benchmark records
 │   └── routers/
 │       ├── __init__.py           # Routers package initializer
-│       ├── auth.py               # POST /auth/login and GET /auth/me
-│       ├── predict.py            # POST /predict (protected)
-│       ├── claims_log.py         # GET /claims-log (protected)
-│       └── submit_outcome.py     # POST /submit-outcome (protected)
+│       ├── auth.py               # POST /auth/login and GET /auth/me (plus alias routes)
+│       ├── predict.py            # POST /predict (protected claim risk inference and logging)
+│       ├── claims_log.py         # GET /claims-log (protected historical audit query)
+│       └── submit_outcome.py     # POST /submit-outcome (protected closed-loop adjudication update)
 ├── data/                         # Training data caches and lookup matrices
+│   ├── cleaned_claims_final.csv  # Cleaned input dataset
+│   ├── training_dataset_final.csv # Fully feature-engineered training dataset (120,000 rows)
+│   ├── imputation_report.json    # Statistical imputation audit report
+│   ├── impute_missing_fields.py  # Data imputation script
+│   ├── generate_synthetic_claims.py # Synthetic augmentation generator
+│   └── synthetic_field_generators.py # Realistic field generation rules
 ├── .env.example                  # Template of required environment variables
 ├── requirements.txt              # Production Python package dependencies
 ├── supabase_users_migration.sql  # SQL DDL script for Supabase users table & seed accounts
-└── test_backend.py               # Verification test suite covering ML, SHAP, auth, and logs
+└── test_backend.py               # Complete automated test suite covering ML, SHAP, auth, and logs
 ```
 
 ---
 
 ## 3. User Authentication & Security Strategy
 
-### Authentication Flow
+### Authentication Workflow
 1. **User Sign In (`POST /auth/login` or `POST /login`):**
    - User submits `work_email` and `password`.
-   - The backend checks Supabase `users` table (or local resilient store).
-   - Validates password using bcrypt.
+   - The backend checks the Supabase `users` table (or local resilient user store).
+   - Validates password using bcrypt hashing.
    - Signs and returns a 24-hour JWT Bearer token along with user context (`email`, `name`, `role`).
 2. **Session Restoration (`GET /auth/me` or `GET /me`):**
    - Frontend passes `Authorization: Bearer <token>`.
-   - Resolves and verifies user payload.
+   - Resolves and verifies user payload from the decoded token claims.
 3. **Route Protection:**
    - Critical routes (`/predict`, `/claims-log`, `/submit-outcome`) inject `current_user: dict = Depends(get_current_user)`.
    - Missing or expired tokens immediately trigger `401 Unauthorized` with `WWW-Authenticate: Bearer`.
 
-### Pre-Seeded Default Test Accounts
-| Email | Password | Name | Role |
-| :--- | :--- | :--- | :--- |
-| `admin@denialguard.com` | `password123` | Alice Admin | `Admin` |
-| `malvarez@northstar.health` | `password123` | Maya Alvarez | `Analyst` |
-| `jlee@northstar.health` | `password123` | Jordan Lee | `Biller` |
-| `biller@denialguard.com` | `password123` | Bob Biller | `Biller` |
+### Pre-Seeded Default Accounts
+| Email | Password | Display Name | Role | Access Scope |
+| :--- | :--- | :--- | :--- | :--- |
+| `admin@denialguard.com` | `password123` | Alice Admin | `Admin` | Full system access, configuration & audits |
+| `malvarez@northstar.health` | `password123` | Maya Alvarez | `Analyst` | Analytics, risk predictions & outcome reviews |
+| `jlee@northstar.health` | `password123` | Jordan Lee | `Biller` | Pre-submission claim checking & corrections |
+| `biller@denialguard.com` | `password123` | Bob Biller | `Biller` | Pre-submission claim checking & corrections |
 
 ---
 
@@ -116,53 +124,97 @@ backend/
 
 ### Feature Set (20 Raw Inputs + 3 Engineered Features)
 The inference engine consumes 20 standard CMS-1500 / UB-04 claim fields:
-1. `claim_type`: `Professional`, `Institutional`, `Dental`, `Vision`
-2. `payer`: `Medicare`, `Medicaid`, `UnitedHealthcare`, `BlueCross`, `Aetna`, `Cigna`, `Humana`
-3. `plan_type`: `HMO`, `PPO`, `EPO`, `POS`, `Medicare Advantage`
-4. `eligibility_status`: `Active`, `Inactive`, `Pending`, `Terminated`
-5. `provider_specialty`: `Cardiology`, `Orthopedics`, `General Practice`, `Dermatology`, etc.
-6. `network_status`: `In-Network`, `Out-of-Network`
-7. `icd10_code`: ICD-10 diagnosis code (e.g. `I10`, `E11.9`, `M54.5`)
-8. `cpt_code`: CPT procedure code (e.g. `99213`, `99214`, `27447`)
-9. `modifiers`: Modifiers applied (e.g. `25`, `59`, `LT`, `RT`, `None`)
-10. `pos_code`: Place of Service code (e.g. `11` Office, `21` Inpatient, `22` Outpatient, `23` ER, `02` Telehealth)
-11. `units_billed`: Integer units billed (ge: 1)
-12. `charge_amount`: Total billed charge amount ($USD)
-13. `pa_status`: Prior Authorization status (`Approved`, `Missing`, `Denied`, `Not Required`, `Pending`)
-14. `referral_status`: Referral status (`Active`, `Missing`, `Not Required`, `Expired`)
-15. `documentation_flag`: Boolean (`True` if clinical notes/charts are attached)
-16. `dos`: Date of Service (`YYYY-MM-DD`)
-17. `submission_date`: Claim Submission Date (`YYYY-MM-DD`)
-18. `days_to_filing_deadline`: Integer days before payer filing deadline expires
-19. `cob_flag`: Boolean Coordination of Benefits flag
-20. `claim_id`: Unique identifier (auto-generated as `CLM-XXXXXXXX` if omitted)
 
-#### 3 Engineered Features:
-- `hist_denial_rate_cpt_payer`: Historical denial prior for the specific CPT-Payer pairing.
-- `hist_denial_rate_provider_payer`: Historical denial rate for the Provider Specialty-Payer combination.
-- `claim_amount_deviation`: Ratio of billed `charge_amount` against the median benchmark for that procedure code and specialty.
+| Field | Type | Description | Example / Allowed Values |
+| :--- | :--- | :--- | :--- |
+| `claim_id` | `string` | Unique claim identifier (auto-generated if omitted) | `"CLM-2026-08397"` |
+| `claim_type` | `string` | Type of health insurance claim | `"Professional"`, `"Institutional"`, `"Dental"`, `"Vision"` |
+| `payer` | `string` | Payer / Insurance carrier name | `"Medicare"`, `"Medicaid"`, `"UnitedHealthcare"`, `"BlueCross"`, `"Aetna"`, `"Cigna"`, `"Humana"` |
+| `plan_type` | `string` | Health plan benefit category | `"HMO"`, `"PPO"`, `"EPO"`, `"POS"`, `"Medicare Advantage"` |
+| `eligibility_status` | `string` | Patient insurance eligibility on Date of Service | `"Active"`, `"Inactive"`, `"Pending"`, `"Terminated"` |
+| `provider_specialty` | `string` | Medical provider specialty | `"Cardiology"`, `"Orthopedics"`, `"General Practice"`, `"Dermatology"`, etc. |
+| `network_status` | `string` | Provider in-network status with target payer | `"In-Network"`, `"Out-of-Network"` |
+| `icd10_code` | `string` | Primary ICD-10 diagnosis code | `"I10"`, `"E11.9"`, `"M25.50"`, `"M54.5"` |
+| `cpt_code` | `string` | Primary CPT / HCPCS procedure code | `"99213"`, `"99214"`, `"27447"`, `"99285"` |
+| `modifiers` | `string` | CPT procedure modifier(s) | `"None"`, `"25"`, `"59"`, `"LT"`, `"RT"` |
+| `pos_code` | `string` | CMS Place of Service code | `"11"` (Office), `"21"` (Inpatient), `"22"` (Outpatient), `"23"` (ER), `"02"` (Telehealth) |
+| `units_billed` | `integer` | Billed procedure units (ge: 1) | `1`, `2`, `4` |
+| `charge_amount` | `float` | Total billed dollar charge amount (> 0) | `5200.00` |
+| `pa_status` | `string` | Prior Authorization status | `"Approved"`, `"Missing"`, `"Denied"`, `"Not Required"`, `"Pending"` |
+| `referral_status` | `string` | PCP referral status | `"Active"`, `"Missing"`, `"Not Required"`, `"Expired"` |
+| `documentation_flag` | `boolean` | Flag indicating attached clinical chart notes | `true` or `false` |
+| `dos` | `date` | Date of Service (`YYYY-MM-DD`) | `"2026-06-01"` |
+| `submission_date` | `date` | Target Claim Submission Date (`YYYY-MM-DD`) | `"2026-08-25"` |
+| `days_to_filing_deadline` | `integer` | Days remaining before payer timely filing deadline | `5`, `45`, `90` |
+| `cob_flag` | `boolean` | Coordination of Benefits flag | `true` or `false` |
 
-### SHAP TreeExplainer & Remediation Engine
-- Computes exact local Shapley values for each inference.
-- Translates top negative/positive features into human-readable billing explanations (e.g. "Missing prior authorization", "Expenses incurred after coverage terminated").
-- Maps predicted risk to specific CARC codes (`CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`) and generates targeted pre-submission corrective actions.
-
-### Model Performance Metrics (`metrics.json`)
-- **Dataset Size:** 120,000 records (80/20 train/test split)
-- **Accuracy:** `87.85%`
-- **F1 Score:** `0.7543`
-- **Precision:** `87.17%`
-- **Recall:** `66.48%`
-- **ROC AUC:** `0.8497`
-- **Latency:** `< 110ms` per full SHAP prediction (well below the 2-second target).
+#### 3 Engineered Features (Pre-computed Lookup Matrix):
+1. `hist_denial_rate_cpt_payer`: Historical denial frequency for the specific CPT-Payer combination.
+2. `hist_denial_rate_provider_payer`: Historical denial rate for the Provider Specialty-Payer combination.
+3. `claim_amount_deviation`: Ratio of billed `charge_amount` relative to the historical median benchmark for that procedure code and specialty.
 
 ---
 
-## 5. Database Architecture (Supabase)
+### SHAP TreeExplainer & Root Cause Attribution
+- Computes exact local Shapley values using `shap.TreeExplainer` on the trained XGBoost tree ensemble.
+- Translates raw feature impacts into human-readable billing explanations (e.g., *"Clinical Documentation Attached"*, *"Prior Authorization Status"*, *"Timely Filing Deadline Margin"*).
+- Ranks contributing factors by absolute SHAP impact and classifies whether each factor `increases_risk` or `decreases_risk`.
+
+---
+
+### CARC Forecasting & Corrective Action Rules
+When high risk is detected, the engine maps feature patterns to standard Claim Adjustment Reason Codes (CARC):
+
+| CARC Code | Code Description | Trigger Conditions | Corrective Action Recommendation |
+| :--- | :--- | :--- | :--- |
+| **`CO-197`** | Precertification / Prior Authorization Absent | High risk & `pa_status` in `['Missing', 'Denied', 'Pending']` | *"Attach approved Prior Authorization reference number to box 23 before submitting."* |
+| **`CO-16`** | Missing Documentation / Information | High risk & `documentation_flag == False` | *"Attach mandatory clinical chart notes and operative reports to substantiate medical necessity."* |
+| **`CO-27`** | Expenses Incurred After Coverage Terminated | High risk & `eligibility_status` in `['Inactive', 'Terminated']` | *"Re-verify active subscriber policy with payer before submitting; eligibility is inactive on DOS."* |
+| **`CO-29`** | Timely Filing Limit Expired | High risk & `days_to_filing_deadline <= 7` | *"Expedite immediate submission — claim is within timely filing cutoff window."* |
+| **`CO-50`** | Non-Covered Service / Plan Exclusion | High risk & `plan_type == 'HMO'` & `network_status == 'Out-of-Network'` | *"Obtain Out-of-Network authorization or transition to in-network facility under HMO rules."* |
+| **`CO-97`** | Bundled Procedure / Missing Modifier | High risk & modifier missing for multi-unit or complex surgical CPT | *"Review NCCI edit tables and attach appropriate modifier (e.g., -25 or -59) to prevent bundling denial."* |
+| **`CO-4`** | Procedure / Modifier Inconsistency | High risk & general modifier inconsistency | *"Verify modifier compatibility with primary CPT code and diagnosis alignment."* |
+| **`CLEAN`** | Clean Claim (< 35% Risk Score) | Risk score < 35.0 | *"Claim parameters meet standard payer clean claim guidelines. Ready for submission."* |
+
+---
+
+### Model Performance Benchmarks & Multi-Threshold Regimes (`metrics.json`)
+- **Training Records:** 120,000 CMS-1500 claims (strict train/test isolation, zero data leakage)
+- **Test Holdout Split:** 24,000 records (20% holdout, 28.05% true denial prevalence)
+- **ROC AUC:** `0.8498`
+- **PR-AUC (Average Precision):** `0.8257`
+- **Inference Latency:** `27.3ms – 72.7ms` per full SHAP explanation (SLA: `< 110ms`)
+
+#### Production Operating Regimes
+
+| Operating Regime | Decision Threshold ($T$) | Recall | Precision | F1 Score | Accuracy | Target Use Case |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **1. Recall-Optimized** | **`0.25` (25%)** | **`84.84%`** | `41.10%` | `0.5538` | `61.64%` | High-risk surgical / oncology specialties (zero tolerance for missed denials) |
+| **2. Balanced Production (Default)** | **`0.35` (35%)** | **`71.71%`** | **`72.59%`** | **`0.7215`** | **`84.47%`** | Standard revenue cycle operations (optimal clinical/billing balance) |
+| **3. High-Precision / F1-Max** | **`0.50` (50%)** | `66.45%` | **`87.43%`** | **`0.7551`** | **`87.91%`** | Automated billing workflows requiring high certainty |
+| **4. Maximum Precision** | **`0.65` (65%)** | `63.82%` | **`94.03%`** | **`0.7603`** | **`88.71%`** | Conservative audit escalation |
+
+---
+
+### CARC Multi-Class Validation & Rule Overlap Analysis
+Evaluated across all 24,000 held-out test claims:
+- **Overall Multi-Class Accuracy:** `88.0%`
+- **Per-Class Metrics:**
+  - `CO-16` (Missing Documentation): Precision `1.00` | Recall `1.00` | F1 `1.00`
+  - `CO-27` (Coverage Inactive/Terminated): Precision `0.69` | Recall `0.86` | F1 `0.77`
+  - `CO-197` (Prior Auth Missing/Denied): Precision `0.95` | Recall `0.64` | F1 `0.77`
+  - `CLEAN` (Clean Claim): Precision `0.88` | Recall `0.96` | F1 `0.92`
+- **Rule Overlap Frequency:** **16.40% of claims (3,937 / 24,000)** trigger $\ge 2$ rules simultaneously (e.g. missing PA + unattached notes).
+- **Tie-Breaking Priority:**
+  $$\text{CO-27 (Eligibility)} \succ \text{CO-197 (Prior Auth)} \succ \text{CO-16 (Documentation)} \succ \text{CO-29 (Filing Deadline)} \succ \text{CO-50 (OON Referral)} \succ \text{CO-4 (Modifiers)} \succ \text{CO-97 (Priors)}$$
+
+---
+
+## 5. Database Architecture (Supabase PostgreSQL)
 
 ### Table: `users`
 ```sql
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -170,12 +222,13 @@ CREATE TABLE users (
     role TEXT NOT NULL CHECK (role IN ('Biller', 'Analyst', 'Admin', 'Read-only')),
     created_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_users_work_email ON users(LOWER(work_email));
+
+CREATE INDEX IF NOT EXISTS idx_users_work_email ON users(LOWER(work_email));
 ```
 
 ### Table: `claims_log`
 ```sql
-CREATE TABLE claims_log (
+CREATE TABLE IF NOT EXISTS claims_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     claim_id TEXT UNIQUE NOT NULL,
     claim_type TEXT,
@@ -208,25 +261,26 @@ CREATE TABLE claims_log (
     denial_flag BOOLEAN,
     created_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_claims_log_created_at ON claims_log(created_at DESC);
-CREATE INDEX idx_claims_log_claim_id ON claims_log(claim_id);
+
+CREATE INDEX IF NOT EXISTS idx_claims_log_created_at ON claims_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_claims_log_claim_id ON claims_log(claim_id);
 ```
 
-### Resilience & Offline Mode
-If `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` are not configured or the remote database is unreachable:
-- Database operations gracefully fallback to an in-memory thread-safe queue.
-- API requests remain 100% operational without crashing.
+### Dual-Mode Persistence & Zero-Downtime Fallback
+The backend automatically checks connectivity to Supabase:
+1. **Online Mode (Supabase Configured & Connected):** Reads and writes directly to PostgreSQL with real-time audit capability.
+2. **Offline Fallback Mode (Unconfigured or Disconnected):** Operations seamlessly buffer to a thread-safe in-memory cache, ensuring that zero endpoints crash and demonstrations never fail.
 
 ---
 
-## 6. Complete API Reference
+## 6. Complete REST API Reference
 
 ### 6.1 Authentication Endpoints
 
-#### `POST /auth/login` (or `/login`)
-Authenticate user credentials and receive a JWT Bearer token.
+#### `POST /auth/login` (or `POST /login`)
+Authenticate work credentials and receive a signed JWT access token.
 
-**Request Body:**
+- **Request Body:**
 ```json
 {
   "work_email": "admin@denialguard.com",
@@ -234,7 +288,7 @@ Authenticate user credentials and receive a JWT Bearer token.
 }
 ```
 
-**Response (200 OK):**
+- **Response (`200 OK`):**
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -247,13 +301,20 @@ Authenticate user credentials and receive a JWT Bearer token.
 }
 ```
 
-#### `GET /auth/me` (or `/me`)
-Retrieve current user session from Bearer token.
+- **Example `curl`:**
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"work_email":"admin@denialguard.com","password":"password123"}'
+```
 
-**Headers:**
-`Authorization: Bearer <access_token>`
+---
 
-**Response (200 OK):**
+#### `GET /auth/me` (or `GET /me`)
+Retrieve current user session metadata from the Bearer token.
+
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Response (`200 OK`):**
 ```json
 {
   "email": "admin@denialguard.com",
@@ -267,12 +328,10 @@ Retrieve current user session from Bearer token.
 ### 6.2 ML Prediction & Risk Explanation
 
 #### `POST /predict`
-Predict claim denial risk, compute SHAP feature importance, predict CARC reason code, and return suggested corrective action.
+Run pre-submission denial prediction, compute SHAP feature attributions, predict CARC reason code, and log claim audit record.
 
-**Headers:**
-`Authorization: Bearer <access_token>`
-
-**Request Body:**
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Request Body:**
 ```json
 {
   "claim_id": "CLM-2026-08397",
@@ -298,7 +357,7 @@ Predict claim denial risk, compute SHAP feature importance, predict CARC reason 
 }
 ```
 
-**Response (200 OK):**
+- **Response (`200 OK`):**
 ```json
 {
   "claim_id": "CLM-2026-08397",
@@ -330,17 +389,44 @@ Predict claim denial risk, compute SHAP feature importance, predict CARC reason 
 }
 ```
 
+- **Example `curl`:**
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{
+    "claim_id": "CLM-2026-08397",
+    "claim_type": "Institutional",
+    "payer": "UnitedHealthcare",
+    "plan_type": "HMO",
+    "eligibility_status": "Inactive",
+    "provider_specialty": "Orthopedics",
+    "network_status": "Out-of-Network",
+    "icd10_code": "M25.50",
+    "cpt_code": "27447",
+    "modifiers": "None",
+    "pos_code": "21",
+    "units_billed": 1,
+    "charge_amount": 5200.00,
+    "pa_status": "Missing",
+    "referral_status": "Missing",
+    "documentation_flag": false,
+    "dos": "2026-06-01",
+    "submission_date": "2026-08-25",
+    "days_to_filing_deadline": 5,
+    "cob_flag": false
+  }'
+```
+
 ---
 
-### 6.3 Outcome Feedback & Adjudication Tracking
+### 6.3 Outcome Feedback & Closed-Loop Adjudication
 
 #### `POST /submit-outcome`
-Records the final adjudication status (`paid` vs `denied`) for a claim to support closed-loop learning and dashboard reporting.
+Records the final clearinghouse / payer adjudication result (`paid` vs `denied`) for a claim.
 
-**Headers:**
-`Authorization: Bearer <access_token>`
-
-**Request Body:**
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Request Body:**
 ```json
 {
   "claim_id": "CLM-2026-08397",
@@ -349,7 +435,7 @@ Records the final adjudication status (`paid` vs `denied`) for a claim to suppor
 }
 ```
 
-**Response (200 OK):**
+- **Response (`200 OK`):**
 ```json
 {
   "status": "success",
@@ -360,20 +446,25 @@ Records the final adjudication status (`paid` vs `denied`) for a claim to suppor
 }
 ```
 
+- **Error Response (`404 Not Found`):**
+*(Returned when attempting to update a claim ID that does not exist in the database)*
+```json
+{
+  "detail": "Claim ID not found"
+}
+```
+
 ---
 
-### 6.4 Audit Logs & Health
+### 6.4 Claims Audit Log Query
 
 #### `GET /claims-log`
-Fetches recent claim predictions, risk scores, and adjudications ordered chronologically.
+Fetches historical claim predictions, risk scores, and adjudication status ordered by creation date descending.
 
-**Headers:**
-`Authorization: Bearer <access_token>`
-
-**Query Parameters:**
-- `limit` (int, default: 50, max: 500)
-
-**Response (200 OK):**
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Query Parameters:**
+  - `limit` (optional integer, default: `50`, max: `500`)
+- **Response (`200 OK`):**
 ```json
 [
   {
@@ -384,15 +475,20 @@ Fetches recent claim predictions, risk scores, and adjudications ordered chronol
     "predicted_risk_score": 100.0,
     "predicted_carc_code": "CO-27",
     "actual_outcome": "denied",
+    "denial_flag": true,
     "created_at": "2026-09-03T16:26:50.740647+00:00"
   }
 ]
 ```
 
-#### `GET /health` (or `GET /`)
-Public health check returning system status, model engine type, and production validation metrics.
+---
 
-**Response (200 OK):**
+### 6.5 System Health & Metrics
+
+#### `GET /health` (or `GET /`)
+Public system monitoring probe returning service health, active ML engine, and evaluation benchmarks.
+
+- **Response (`200 OK`):**
 ```json
 {
   "status": "healthy",
@@ -413,17 +509,29 @@ Public health check returning system status, model engine type, and production v
 
 ---
 
-## 7. Environment Configuration (`.env`)
+## 7. HTTP Status Codes & Error Handling Matrix
 
-Create `.env` inside `backend/`:
+| HTTP Status | Error Reason | Typical Trigger | Response Body |
+| :--- | :--- | :--- | :--- |
+| `200 OK` | Success | Valid request executed successfully | Object / List payload |
+| `401 Unauthorized` | Missing / Invalid Token | Missing `Authorization` header, invalid signature, expired JWT, or wrong credentials | `{"detail": "Could not validate credentials"}` |
+| `404 Not Found` | Resource Missing | Outcome submission targeting an unknown `claim_id` | `{"detail": "Claim ID not found"}` |
+| `422 Unprocessable Entity` | Validation Error | Missing required fields, invalid date format, or out-of-range numeric input | `{"detail": [{"loc": ["body", "charge_amount"], "msg": "Input should be greater than 0"}]}` |
+| `500 Internal Server Error` | Server Exception | Unhandled runtime exception in model execution | `{"detail": "Internal server error message"}` |
+
+---
+
+## 8. Environment Configuration (`.env`)
+
+Create a `.env` file in `backend/` by referencing [`.env.example`](file:///c:/Users/kayel/my-hackathon-project/backend/.env.example):
 
 ```env
-# Supabase Database Configuration
-SUPABASE_URL=https://your-project.supabase.co
+# Supabase Postgres Connection
+SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key-here
 
 # JWT Authentication
-SECRET_KEY=your-super-secret-jwt-signing-key-minimum-32-chars
+SECRET_KEY=your-strong-secret-key-here-minimum-32-chars
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
@@ -435,25 +543,41 @@ FRONTEND_ORIGIN=http://localhost:3000
 
 ---
 
-## 8. Quick Start Guide
+## 9. Quick Start & Developer Guide
 
-### 1. Install Dependencies
+### Step 1: Install Python Dependencies
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
 ```
 
-### 2. Run Database Migration (Optional for Live Supabase)
-Execute `supabase_users_migration.sql` in your Supabase SQL Editor to provision the tables. (If omitted, the backend automatically uses its resilient local in-memory fallback store).
+### Step 2: (Optional) Run Database Migration
+If connecting to a live Supabase project, execute [`supabase_users_migration.sql`](file:///c:/Users/kayel/my-hackathon-project/backend/supabase_users_migration.sql) in your Supabase SQL Editor. If skipped, the backend operates in resilient offline mode with default seed accounts.
 
-### 3. Run Verification Tests
+### Step 3: Run Verification Suite
 ```powershell
 python -u test_backend.py
 ```
+Expected output:
+```
+=== DENIALGUARD AI BACKEND VERIFICATION SUITE (AUTH + ML) ===
+[TEST 1] Testing GET /health: PASS (200 OK)
+[TEST 2] Testing POST /auth/login with valid credentials: PASS (200 OK)
+[TEST 3] Testing POST /auth/login with invalid password: PASS (401 Unauthorized)
+[TEST 4] Testing GET /auth/me with Bearer token: PASS (200 OK)
+[TEST 5] Testing route protection without token: PASS (401 Unauthorized)
+[TEST 6] Testing POST /predict with High-Risk Claim: PASS (Risk: 100.0%, CARC: CO-27)
+[TEST 7] Testing POST /predict with Clean/Low-Risk Claim: PASS (Risk: 34.0%, Clean)
+[TEST 8] Testing POST /submit-outcome for existing claim: PASS (200 OK)
+[TEST 9] Testing POST /submit-outcome for non-existent claim: PASS (404 Not Found)
+[TEST 10] Testing GET /claims-log: PASS (200 OK)
 
-### 4. Launch Development Server
+>>> ALL 10 TESTS PASSED SUCCESSFULLY! <<<
+```
+
+### Step 4: Launch Backend Server
 ```powershell
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-
-Interactive Swagger API docs will be available at: `http://localhost:8000/docs`.
+- Interactive Swagger UI: `http://localhost:8000/docs`
+- OpenAPI Specification: `http://localhost:8000/openapi.json`
