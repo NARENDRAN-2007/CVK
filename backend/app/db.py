@@ -49,7 +49,8 @@ def _sanitize_claim_row_for_supabase(d: Dict[str, Any]) -> Dict[str, Any]:
         "days_to_filing_deadline", "cob_flag", "hist_denial_rate_cpt_payer",
         "hist_denial_rate_provider_payer", "claim_amount_deviation",
         "predicted_risk_score", "predicted_carc_code", "top_contributing_factors",
-        "suggested_corrective_action", "actual_outcome", "denial_flag"
+        "suggested_corrective_action", "actual_outcome", "denial_flag",
+        "created_at", "updated_at"
     }
     out = {}
     for k, v in d.items():
@@ -197,6 +198,11 @@ def insert_user(user_data: Dict[str, Any]) -> bool:
 
 
 def insert_claim_log(row_data: Dict[str, Any]) -> bool:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if not row_data.get("created_at"):
+        row_data["created_at"] = now_iso
+    row_data["updated_at"] = now_iso
+
     _in_memory_claims_log.insert(0, row_data)
     if len(_in_memory_claims_log) > 500:
         _in_memory_claims_log.pop()
@@ -215,6 +221,11 @@ def insert_claim_log(row_data: Dict[str, Any]) -> bool:
 
 
 def upsert_claim_log(claim_data: Dict[str, Any]) -> bool:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if not claim_data.get("created_at"):
+        claim_data["created_at"] = now_iso
+    claim_data["updated_at"] = now_iso
+
     claim_id = claim_data.get("claim_id")
     for i, row in enumerate(_in_memory_claims_log):
         if row.get("claim_id") == claim_id:
@@ -301,7 +312,8 @@ def insert_claim_document(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("claim_documents").insert(doc_data).execute()
+            sanitized = _deep_sanitize(doc_data)
+            client.table("claim_documents").insert(sanitized).execute()
         except Exception as e:
             logger.warning(f"Failed to insert claim_document into Supabase: {e}")
 
@@ -309,16 +321,28 @@ def insert_claim_document(doc_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_claim_documents(claim_id: str, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    docs = []
     client = get_supabase()
     if client and _is_live_mode:
         try:
             res = client.table("claim_documents").select("*").eq("claim_id", claim_id).order("uploaded_at", desc=True).execute()
-            if res.data is not None:
-                return res.data
+            if res.data:
+                docs = list(res.data)
         except Exception as e:
             logger.warning(f"Failed to fetch claim_documents from Supabase: {e}")
 
-    return [d for d in _in_memory_claim_documents if d.get("claim_id") == claim_id]
+    mem_docs = [d for d in _in_memory_claim_documents if d.get("claim_id") == claim_id]
+    seen_ids = set()
+    combined = []
+    for d in docs + mem_docs:
+        doc_id = d.get("id")
+        if doc_id and doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            combined.append(d)
+        elif not doc_id:
+            combined.append(d)
+
+    return combined
 
 
 def get_workspace_members(workspace_id: str) -> List[Dict[str, Any]]:
@@ -565,7 +589,8 @@ def insert_notification(notif_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("notifications").insert(notif_data).execute()
+            sanitized = _deep_sanitize(notif_data)
+            client.table("notifications").insert(sanitized).execute()
             return True, notif_data
         except Exception as e:
             logger.warning(f"Could not insert notification into Supabase: {e}")

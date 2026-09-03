@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from ..schemas import CreateAppealRequest, AppealResponse, UpdateAppealStatusRequest
-from ..db import insert_appeal, get_appeals, update_appeal_status, get_claim_by_id, insert_notification
+from ..db import insert_appeal, get_appeals, update_appeal_status, get_claim_by_id, insert_notification, get_claim_documents
 from ..core.deps import get_current_user
 
 router = APIRouter(prefix="/appeals", tags=["Appeals"])
@@ -13,22 +13,31 @@ router = APIRouter(prefix="/appeals", tags=["Appeals"])
 def list_appeals(current_user: dict = Depends(get_current_user)) -> List[AppealResponse]:
     workspace_id = current_user.get("workspace_id")
     records = get_appeals(workspace_id)
-    return [
-        AppealResponse(
-            id=r["id"],
-            claim_id=r["claim_id"],
-            appeal_level=r.get("appeal_level", "Level 1"),
-            status=r.get("status", "drafting"),
-            payer=r.get("payer", "Unknown Payer"),
-            billed_amount=Decimal(str(r.get("billed_amount", "0.00"))),
-            deadline=r.get("deadline", "30 days"),
-            attached_document_ids=r.get("attached_document_ids", []),
-            notes=r.get("notes", ""),
-            created_at=r.get("created_at", datetime.now(timezone.utc).isoformat()),
-            updated_at=r.get("updated_at", datetime.now(timezone.utc).isoformat())
+    out = []
+    for r in records:
+        claim_id = r.get("claim_id")
+        live_docs = get_claim_documents(claim_id, workspace_id) if claim_id else []
+        live_doc_ids = [d["id"] for d in live_docs] if live_docs else []
+        stored_doc_ids = r.get("attached_document_ids") or []
+        # Union of stored and live linked documents to guarantee accuracy
+        all_doc_ids = list(dict.fromkeys(stored_doc_ids + live_doc_ids))
+
+        out.append(
+            AppealResponse(
+                id=r["id"],
+                claim_id=r["claim_id"],
+                appeal_level=r.get("appeal_level", "Level 1"),
+                status=r.get("status", "drafting"),
+                payer=r.get("payer", "Unknown Payer"),
+                billed_amount=Decimal(str(r.get("billed_amount", "0.00"))),
+                deadline=r.get("deadline", "30 days"),
+                attached_document_ids=all_doc_ids,
+                notes=r.get("notes", ""),
+                created_at=r.get("created_at", datetime.now(timezone.utc).isoformat()),
+                updated_at=r.get("updated_at", datetime.now(timezone.utc).isoformat())
+            )
         )
-        for r in records
-    ]
+    return out
 
 
 @router.post("", response_model=AppealResponse, status_code=status.HTTP_201_CREATED)
@@ -37,7 +46,22 @@ def create_appeal(
     current_user: dict = Depends(get_current_user)
 ) -> AppealResponse:
     workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
+    
+    # Issue 2 Guard: Prevent multiple active/open appeals for the same claim
+    existing_appeals = get_appeals()
+    for a in existing_appeals:
+        if a.get("claim_id") == request.claim_id and a.get("status") in ["drafting", "submitted", "payer_review"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An active appeal ({a['id']}) is already in '{a.get('status')}' status for claim {request.claim_id}. Resolve or close the existing appeal before starting a new one."
+            )
+
     claim = get_claim_by_id(request.claim_id)
+    if claim and (claim.get("predicted_carc_code") == "CLEAN" or (claim.get("actual_outcome") == "paid" and claim.get("predicted_carc_code") == "CLEAN")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot initiate an appeal for clean claim {request.claim_id}. Appeals are only permitted for denied or high-risk claims with actionable CARC codes."
+        )
 
     payer = claim.get("payer") if claim else "Commercial Payer"
     charge = claim.get("charge_amount") if claim else Decimal("0.00")
@@ -51,7 +75,7 @@ def create_appeal(
         "payer": payer,
         "billed_amount": str(charge),
         "deadline": deadline_date,
-        "attached_document_ids": request.attached_document_ids,
+        "attached_document_ids": request.attached_document_ids or [],
         "notes": request.notes or "",
         "created_by": current_user.get("sub", "")
     }
@@ -71,6 +95,11 @@ def create_appeal(
         "link": f"/appeals"
     })
 
+    live_docs = get_claim_documents(created["claim_id"], workspace_id)
+    live_doc_ids = [d["id"] for d in live_docs] if live_docs else []
+    stored_doc_ids = created.get("attached_document_ids") or []
+    all_doc_ids = list(dict.fromkeys(stored_doc_ids + live_doc_ids))
+
     return AppealResponse(
         id=created["id"],
         claim_id=created["claim_id"],
@@ -79,7 +108,7 @@ def create_appeal(
         payer=created["payer"],
         billed_amount=Decimal(str(created.get("billed_amount", "0.00"))),
         deadline=created.get("deadline", "30 days"),
-        attached_document_ids=created.get("attached_document_ids", []),
+        attached_document_ids=all_doc_ids,
         notes=created.get("notes", ""),
         created_at=created["created_at"],
         updated_at=created["updated_at"]
@@ -101,13 +130,19 @@ def patch_appeal_status(
             f"[Appeals] Appeal {appeal_id} status updated in-memory but failed to persist to Supabase."
         )
 
+    workspace_id = updated.get("workspace_id") or "ws-northstar-001"
     insert_notification({
-        "workspace_id": updated.get("workspace_id") or "ws-northstar-001",
+        "workspace_id": workspace_id,
         "title": f"Appeal Status Updated: {appeal_id}",
         "message": f"Appeal moved to '{request.status}' stage for claim {updated.get('claim_id')}.",
         "type": "appeal",
         "link": f"/appeals"
     })
+
+    live_docs = get_claim_documents(updated["claim_id"], workspace_id)
+    live_doc_ids = [d["id"] for d in live_docs] if live_docs else []
+    stored_doc_ids = updated.get("attached_document_ids") or []
+    all_doc_ids = list(dict.fromkeys(stored_doc_ids + live_doc_ids))
 
     return AppealResponse(
         id=updated["id"],
@@ -117,7 +152,7 @@ def patch_appeal_status(
         payer=updated.get("payer", "Commercial Payer"),
         billed_amount=Decimal(str(updated.get("billed_amount", "0.00"))),
         deadline=updated.get("deadline", "30 days"),
-        attached_document_ids=updated.get("attached_document_ids", []),
+        attached_document_ids=all_doc_ids,
         notes=updated.get("notes", ""),
         created_at=updated.get("created_at", datetime.now(timezone.utc).isoformat()),
         updated_at=updated.get("updated_at", datetime.now(timezone.utc).isoformat())

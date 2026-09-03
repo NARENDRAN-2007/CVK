@@ -20,11 +20,14 @@ DenialGuard AI halts claim denials before claims leave the hospital electronic h
 4. **Actionable Remediation Engine:** Offers targeted, prescriptive fixes (e.g., attaching required clinical chart notes, acquiring prior authorization reference numbers, adjusting NCCI modifiers).
 5. **Strict Schema & Vocabulary Normalization:** Canonicalized vocabularies enforced by Pydantic `Literal[...]` types across frontend and backend for all categorical attributes (`pa_status`, `referral_status`, `network_status`, `eligibility_status`, `payer`, `provider_specialty`, `plan_type`).
 6. **CPT+Payer Normalized Deviation:** `claim_amount_deviation` engineered feature keyed by `CPT + Payer` and normalized as a percentage deviation from historical benchmark means.
-7. **Native Document Ingestion & Re-Prediction:** Allows billers to upload real PDF/TIFF clinical chart notes via native file pickers, automatically re-running the ML model and updating the claim state in real time.
-8. **Clinical Appeals Pipeline & Direct Claim Linking:** Full multi-stage appeal tracking (`Drafting`, `Submitted`, `Payer Review`, `Resolved`) with database persistence when initiating appeals directly from the claims log or claim detail view.
-9. **Real-Time Notification System:** Live unread notification bell panel tracking high-risk predictions (`≥ 60%`), document uploads, appeal status changes, and team onboarding.
-10. **Reconciled 3-Tier Risk Thresholds:** Unified threshold architecture (`< 35%` Clean/Low Risk, `35%–59.9%` Review Recommended, `≥ 60%` High Risk Alert).
-11. **Closed-Loop Audit & Feedback:** Securely records predictions, file attachments, and actual adjudication outcomes in Supabase PostgreSQL for continuous model retraining.
+7. **Native Document Ingestion & Persistent Storage (`claim_documents`):** Ingests PDF/TIFF clinical files directly into Supabase PostgreSQL, automatically re-running the ML model and updating the claim state in real time.
+8. **Appeals Pipeline & Live Document Count:** Full multi-stage appeal tracking (`Drafting`, `Submitted`, `Payer Review`, `Resolved`) with dynamic document counts live-derived from `claim_documents`.
+9. **Duplicate & Clean Claim Appeal Prevention Guards:** Rejects duplicate active appeals with `HTTP 409 Conflict` and prevents creating appeals on clean claims (`predicted_carc_code == 'CLEAN'`) with `HTTP 400 Bad Request`, paired with frontend disabled states and modal guards.
+10. **Dedicated Vertical Claim Timeline & Localized Timestamps:** Clean vertical step layout where each event occupies its own dedicated row with vertical node connectors, eliminating visual overlap, with UTC ISO persistence and localized timezone formatting.
+11. **Accurate Elapsed Calendar Aging:** Live dynamic calculation of elapsed calendar days from `submission_date` relative to `Date.now()`, ensuring accurate aging irrespective of payer filing deadlines.
+12. **Real-Time Notification System:** Live unread notification bell panel tracking high-risk predictions (`≥ 60%`), document uploads, appeal status changes, and team onboarding.
+13. **Reconciled 3-Tier Risk Thresholds:** Unified threshold architecture (`< 35%` Clean/Low Risk, `35%–59.9%` Review Recommended, `≥ 60%` High Risk Alert).
+14. **Closed-Loop Audit & Feedback:** Securely records predictions, file attachments, and actual adjudication outcomes in Supabase PostgreSQL for continuous model retraining.
 
 ---
 
@@ -37,7 +40,7 @@ graph TD
         AuthUI["Auth & Onboarding (/sign-in, /create-account)"]
         WorklistUI["Prioritized Worklist & Triage (/worklist)"]
         PredictUI["Pre-Submission Claim Scoring (/predict)"]
-        DetailUI["Claim Lifecycle & Native Upload (/claims/:id)"]
+        DetailUI["Claim Detail & Dynamic Timeline (/claims/:id)"]
         AppealsUI["Appeals Pipeline Kanban (/appeals)"]
         NotifUI["Notification Flyout & Unread Badge"]
         PayersUI["Payer Rules Library (/payers)"]
@@ -50,6 +53,7 @@ graph TD
         AuthMiddleware["JWT Bearer Authentication (app/core/deps.py)"]
         Security["BCrypt Hashing & PyJWT HS256 (app/core/security.py)"]
         SchemaValidation["Strict Pydantic Literal Validation (app/schemas.py)"]
+        AppealGuard["Duplicate Appeal Guard (409 Conflict)"]
     end
 
     subgraph MLTier ["Machine Learning & Explainability Engine"]
@@ -66,7 +70,7 @@ graph TD
         UsersTable["users Table"]
         InvitesTable["workspace_invites Table"]
         ClaimsTable["claims_log Table (NUMERIC(10,2) Precision)"]
-        DocsTable["claim_documents Table"]
+        DocsTable["claim_documents Table (Persistent Uploads)"]
         AppealsTable["appeals Table"]
         NotifsTable["notifications Table"]
         SettingsTable["workspace_settings Table"]
@@ -85,6 +89,7 @@ graph TD
 
     API --> AuthMiddleware --> Security
     API --> SchemaValidation
+    API --> AppealGuard
     API --> FeatureEng
     FeatureEng --> XGBoost
     FeatureEng --> SHAP
@@ -123,7 +128,7 @@ graph TD
 | **Explainability (XAI)**| SHAP | `>=0.45.0` | TreeExplainer providing per-claim Shapley attribution values |
 | **Authentication & RBAC**| PyJWT + Passlib/BCrypt | `>=2.8.0` | Stateless JWT Bearer tokens with 24-hour expiration & strict bcrypt verification |
 | **Data Validation** | Pydantic v2 | `>=2.6.0` | Strict type validation with `Literal[...]` categories & `decimal.Decimal` monetary precision |
-| **Persistence** | Supabase (PostgreSQL) | `>=2.3.0` | Cloud PostgreSQL with Row Level Security and clean dual-mode in-memory fallback |
+| **Persistence** | Supabase (PostgreSQL) | `>=2.3.0` | Cloud PostgreSQL with dedicated `claims_log`, `appeals`, `claim_documents`, `notifications` tables |
 
 ---
 
@@ -169,30 +174,85 @@ When a claim score is evaluated, `determine_carc_and_action()` consults `top_fac
 
 ---
 
-## 6. API Endpoints & Data Contracts
+## 6. Database Schema (Supabase PostgreSQL)
 
-All protected endpoints require `Authorization: Bearer <token>` in the HTTP request headers.
+```sql
+-- 1. Claims Log Table
+CREATE TABLE IF NOT EXISTS public.claims_log (
+    id SERIAL PRIMARY KEY,
+    claim_id TEXT UNIQUE NOT NULL,
+    claim_type TEXT,
+    payer TEXT,
+    plan_type TEXT,
+    eligibility_status TEXT,
+    provider_specialty TEXT,
+    network_status TEXT,
+    icd10_code TEXT,
+    cpt_code TEXT,
+    modifiers JSONB,
+    pos_code TEXT,
+    units_billed NUMERIC,
+    charge_amount NUMERIC(10,2),
+    pa_status TEXT,
+    referral_status TEXT,
+    documentation_flag BOOLEAN,
+    dos DATE,
+    submission_date DATE,
+    days_to_filing_deadline INTEGER,
+    cob_flag BOOLEAN,
+    hist_denial_rate_cpt_payer NUMERIC,
+    hist_denial_rate_provider_payer NUMERIC,
+    claim_amount_deviation NUMERIC,
+    predicted_risk_score NUMERIC,
+    predicted_carc_code TEXT,
+    top_contributing_factors JSONB,
+    suggested_corrective_action TEXT,
+    actual_outcome TEXT,
+    denial_flag BOOLEAN,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    outcome_submitted_at TIMESTAMPTZ
+);
 
-### 6.1 Authentication & Workspace Endpoints
-- `POST /auth/login`: Authenticates credentials with bcrypt verification. Returns signed JWT.
-- `POST /auth/register`: Creates organization or joins workspace via 16-character invite code (`NORTHSTAR-XXXXXXXX`).
-- `POST /workspace/invite`: Generates single-use role-based workspace invite code (7-day expiry).
-- `GET /workspace/members`: Retrieves real-time list of members within the active workspace.
-- `GET/POST /workspace/settings`: Fetches and updates workspace triage rules (`auto_assign`, `default_appeal_deadline_days`, `high_risk_threshold`).
-- `GET/POST /workspace/security`: Fetches and updates HIPAA security parameters (`session_timeout_minutes`, `audit_log_retention_days`).
+-- 2. Appeals Table
+CREATE TABLE IF NOT EXISTS public.appeals (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    claim_id TEXT NOT NULL,
+    payer TEXT,
+    level TEXT DEFAULT 'Level 1',
+    status TEXT DEFAULT 'drafting',
+    docs_attached INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-### 6.2 ML Prediction & Document Ingestion
-- `POST /predict`: Evaluates 20 raw inputs + 3 engineered features, computes SHAP values, determines CARC code, sanitizes Decimal types for Supabase Postgres storage, logs claim to audit trail (`persisted: boolean`), and fires high-risk alerts when risk $\ge 60\%$.
-- `POST /claims/{claim_id}/documents`: Ingests multipart clinical files (`.pdf`, `.png`, `.jpg`), auto-repredicts risk with documentation attached, and updates claim record.
-- `GET /claims/{claim_id}/documents`: Returns list of attached documents for a claim with workspace-wide visibility.
+-- 3. Claim Documents Table
+CREATE TABLE IF NOT EXISTS public.claim_documents (
+    id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    uploaded_by TEXT,
+    document_type TEXT,
+    document_title TEXT,
+    storage_path TEXT,
+    uploaded_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_claim_documents_claim ON public.claim_documents(claim_id);
 
-### 6.3 Appeals Pipeline, Real-Time Sync & Outcome Feedback
-- `GET /appeals`: Returns all active appeals across 4 pipeline stages (`drafting`, `submitted`, `payer_review`, `resolved`).
-- `POST /appeals`: Initiates a clinical appeal directly from claim records or Appeals Kanban, persisting record to DB and emitting workspace notification.
-- `PATCH /appeals/{appeal_id}/status`: Advances appeal stage with audit timestamping.
-- `POST /submit-outcome`: Records final clearinghouse adjudication outcome (`paid` vs `denied`).
-- `GET /claims-log`: Retrieves paginated audit log of evaluated claims.
-- **Live Multi-Session Synchronization:** `Home.tsx` synchronizes `appeals`, `denials`, and `notifications` across browser sessions via a 3-second background polling cycle, window focus/visibility triggers, and path-driven route re-evaluation.
+-- 4. Notifications Table
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'system',
+    link TEXT,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
 
 ---
 
@@ -200,11 +260,11 @@ All protected endpoints require `Authorization: Bearer <token>` in the HTTP requ
 
 | Test Suite | Execution Command | Purpose & Coverage |
 | :--- | :--- | :--- |
-| **Comprehensive Fixes Verification** | `python test_fixes_verification.py` | Validates Priorities 1–7: SHAP-driven CARC selection, canonical vocabularies, schema literal rejection (`422`), percentage deviation, and real appeal creation in DB. |
-| **Supabase Persistence & Error Handling** | `python test_supabase_persistence_fix.py` | Validates live Supabase PostgreSQL insertion, Decimal float sanitization, direct DB row verification, and graceful fallback handling (`persisted: false`). |
-| **Backend Integration Suite** | `python test_backend.py` | Tests all FastAPI endpoints, JWT auth rejection, SHAP latency, outcome submission, and claim logs. |
-| **Round 2 Specification Suite** | `python test_round2_spec.py` | Validates invite codes, document upload reprediction, notifications, and settings persistence. |
-| **Frontend Production Build** | `npm run build` (in `denialguard-ai`) | Validates TypeScript typing and builds optimized production bundles. |
+| **Three Issues Verification** | `python test_three_issues.py` | Validates docs attached live count, duplicate appeal 409 guard, and timeline local date/time formatting. |
+| **Supabase Documents E2E** | `python test_supabase_documents_e2e.py` | Validates complete persistent document lifecycle (upload, Supabase DB row check, cross-user visibility, Kanban count, timeline display). |
+| **Duplicate Appeal Timeline Isolation** | `python test_duplicate_timeline_isolation.py` | Confirms that rejected 409 duplicate appeal attempts generate 0 DB rows, 0 notifications, and 0 phantom timeline events. |
+| **Comprehensive Fixes Verification** | `python test_fixes_verification.py` | Validates SHAP CARC rules, canonical vocabularies, percentage deviation, and appeal creation. |
+| **Backend Integration Suite** | `python backend/test_backend.py` | Tests all FastAPI endpoints, JWT auth rejection, SHAP latency, outcome submission, and claim logs. |
 
 ---
 

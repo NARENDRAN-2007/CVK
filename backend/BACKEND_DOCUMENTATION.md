@@ -261,16 +261,69 @@ CREATE TABLE IF NOT EXISTS claims_log (
     suggested_corrective_action TEXT,
     actual_outcome TEXT,
     denial_flag BOOLEAN,
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    outcome_submitted_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_claims_log_created_at ON claims_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_claims_log_claim_id ON claims_log(claim_id);
 ```
 
+### Table: `appeals`
+```sql
+CREATE TABLE IF NOT EXISTS public.appeals (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    claim_id TEXT NOT NULL,
+    payer TEXT,
+    level TEXT DEFAULT 'Level 1',
+    status TEXT DEFAULT 'drafting',
+    docs_attached INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_appeals_claim_id ON appeals(claim_id);
+CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status);
+```
+
+### Table: `claim_documents`
+```sql
+CREATE TABLE IF NOT EXISTS public.claim_documents (
+    id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    uploaded_by TEXT,
+    document_type TEXT,
+    document_title TEXT,
+    storage_path TEXT,
+    uploaded_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_claim_documents_claim_id ON claim_documents(claim_id);
+```
+
+### Table: `notifications`
+```sql
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT DEFAULT 'ws-northstar-001',
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'system',
+    link TEXT,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications(workspace_id, created_at DESC);
+```
+
 ### Dual-Mode Persistence & Zero-Downtime Fallback
 The backend automatically checks connectivity to Supabase:
-1. **Online Mode (Supabase Configured & Connected):** Reads and writes directly to PostgreSQL with real-time audit capability.
+1. **Online Mode (Supabase Configured & Connected):** Reads and writes directly to PostgreSQL with real-time audit capability across `claims_log`, `appeals`, `claim_documents`, and `notifications`.
 2. **Offline Fallback Mode (Unconfigured or Disconnected):** Operations seamlessly buffer to a thread-safe in-memory cache, ensuring that zero endpoints crash and demonstrations never fail.
 
 ---
@@ -485,7 +538,62 @@ Fetches historical claim predictions, risk scores, and adjudication status order
 
 ---
 
-### 6.5 System Health & Metrics
+#### `POST /appeals`
+Create a new clinical appeal for an existing claim.
+- **Validation Guard 1 (Duplicate Active Appeal):** Rejects submissions if an open appeal already exists with `409 Conflict`.
+- **Validation Guard 2 (Clean Claim Prevention):** Rejects submissions if the claim is marked clean (`predicted_carc_code == 'CLEAN'` or `status == 'paid'`) with `400 Bad Request`.
+
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Request Body:**
+```json
+{
+  "claim_id": "CLM-2026-08397",
+  "appeal_level": "Level 1",
+  "attached_document_ids": ["doc-21f7c1ee"],
+  "notes": "Appealing CO-16 denial with attached operative report"
+}
+```
+- **Response (`201 Created`):**
+```json
+{
+  "id": "APL-C73317",
+  "claim_id": "CLM-2026-08397",
+  "appeal_level": "Level 1",
+  "status": "drafting",
+  "payer": "UnitedHealthcare",
+  "billed_amount": "5200.00",
+  "deadline": "Oct 04, 2026",
+  "attached_document_ids": ["doc-21f7c1ee"],
+  "notes": "Appealing CO-16 denial with attached operative report",
+  "created_at": "2026-09-04T03:00:00.000000+00:00",
+  "updated_at": "2026-09-04T03:00:00.000000+00:00"
+}
+```
+
+- **Error Response — Duplicate Appeal (`409 Conflict`):**
+```json
+{
+  "detail": "An active appeal (APL-C73317) is already in 'drafting' status for claim CLM-2026-08397. Resolve or close the existing appeal before starting a new one."
+}
+```
+
+- **Error Response — Clean Claim (`400 Bad Request`):**
+```json
+{
+  "detail": "Cannot initiate an appeal for clean claim CLM-2026-08397. Appeals are only permitted for denied or high-risk claims with actionable CARC codes."
+}
+```
+
+#### `POST /claims/{claim_id}/documents`
+Upload and persist clinical chart notes / PDF records in Supabase, automatically re-running the ML prediction model.
+
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Request Form:** `multipart/form-data` with `file: <Binary>` and `document_type: "operative_report"`
+- **Response (`200 OK`):** Returns uploaded document metadata (`id`, `storage_path`, `document_title`) and updated claim prediction.
+
+---
+
+### 6.6 System Health & Metrics
 
 #### `GET /health` (or `GET /`)
 Public system monitoring probe returning service health, active ML engine, and evaluation benchmarks.
@@ -516,8 +624,10 @@ Public system monitoring probe returning service health, active ML engine, and e
 | HTTP Status | Error Reason | Typical Trigger | Response Body |
 | :--- | :--- | :--- | :--- |
 | `200 OK` | Success | Valid request executed successfully | Object / List payload |
+| `201 Created` | Resource Created | Successful appeal initiation (`POST /appeals`) | Created appeal entity |
 | `401 Unauthorized` | Missing / Invalid Token | Missing `Authorization` header, invalid signature, expired JWT, or wrong credentials | `{"detail": "Could not validate credentials"}` |
 | `404 Not Found` | Resource Missing | Outcome submission targeting an unknown `claim_id` | `{"detail": "Claim ID not found"}` |
+| `409 Conflict` | Duplicate Active Appeal | Attempting to create an appeal on a claim with an existing open appeal | `{"detail": "An active appeal (APL-XXXXXX) is already in 'drafting' status..."}` |
 | `422 Unprocessable Entity` | Validation Error | Missing required fields, invalid date format, or out-of-range numeric input | `{"detail": [{"loc": ["body", "charge_amount"], "msg": "Input should be greater than 0"}]}` |
 | `500 Internal Server Error` | Server Exception | Unhandled runtime exception in model execution | `{"detail": "Internal server error message"}` |
 

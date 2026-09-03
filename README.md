@@ -10,7 +10,9 @@
 - 🔬 **SHAP TreeExplainer Attribution:** Exact mathematical attribution for why a claim is flagged as high-risk.
 - 🏷️ **SHAP-Driven CARC Prediction:** Identifies the likely denial reason (`CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`, `CO-45`) tied directly to the top SHAP driver.
 - 🛠️ **1-Click Clinical/Billing Fixes:** Actionable pre-submission fixes (prior auth numbers, clinical notes, NCCI modifier correction, fee schedule adjustments).
-- 🛡️ **Canonical Vocabulary Enforcement:** Pydantic `Literal[...]` schema constraints prevent training vocabulary drift.
+- 📁 **Persistent Document Lifecycle (`claim_documents`):** PDF/TIFF clinical record uploads with cloud Supabase persistence, auto-reprediction, and live document counting.
+- 🛡️ **Duplicate Appeal Protection (409 Conflict):** Prevents duplicate appeals on active claims with atomic server-side guards and frontend state tracking.
+- ⏱️ **Dynamic Localized Claim Timeline:** Real-time lifecycle audit trail with timezone-aware date parsing and UTC ISO persistence.
 - 📈 **Normalized CPT+Payer Deviation:** Percentage-based `claim_amount_deviation` feature computed against historical procedure/payer means.
 - 📋 **Prioritized Worklist & Appeals Pipeline:** Intelligent claim triage queue and deadline-aware appeal pipeline with real DB persistence.
 - 🔐 **JWT RBAC & Dual-Mode Persistence:** Secure Supabase PostgreSQL persistence with zero-downtime offline fallback.
@@ -26,6 +28,7 @@ graph TD
     subgraph Security Layer
         API --> Auth["JWT HS256 & BCrypt (app/core/security.py)"]
         API --> Validation["Pydantic Literal Validation (app/schemas.py)"]
+        API --> AppealGuard["409 Duplicate Appeal Guard (app/routers/appeals.py)"]
     end
 
     subgraph ML Pipeline
@@ -38,7 +41,7 @@ graph TD
 
     subgraph Data & Storage
         API --> DBRouter["Dual-Mode DB Router (app/db.py)"]
-        DBRouter --> Supabase[("Supabase PostgreSQL")]
+        DBRouter --> Supabase[("Supabase PostgreSQL (claims_log, appeals, claim_documents, notifications)")]
         DBRouter --> MemoryQueue[("Resilient In-Memory Queue")]
     end
 ```

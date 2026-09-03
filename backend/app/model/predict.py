@@ -10,7 +10,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import shap
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Dict, Any, List
 from ..schemas import ClaimInput
 
@@ -346,6 +346,7 @@ def predict_claim(claim_input: ClaimInput) -> Dict[str, Any]:
         "suggested_corrective_action": action,
         "actual_outcome": None,
         "denial_flag": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
     # API response subset

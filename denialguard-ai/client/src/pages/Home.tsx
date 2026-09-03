@@ -116,6 +116,92 @@ export type Denial = {
   assignedTo: string;
   avatar: string;
   department: string;
+  createdAt?: string;
+  submissionDate?: string;
+  dos?: string;
+  actualOutcome?: string;
+};
+
+const formatLocalTimestamp = (isoOrDateStr?: string): string => {
+  if (!isoOrDateStr) return "";
+  try {
+    const trimmed = isoOrDateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-").map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      return dateObj.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+    const d = new Date(trimmed);
+    if (isNaN(d.getTime())) return isoOrDateStr;
+    return (
+      d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }) +
+      " · " +
+      d.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+    );
+  } catch {
+    return isoOrDateStr;
+  }
+};
+
+const formatLocalDate = (isoOrDateStr?: string): string => {
+  if (!isoOrDateStr) return "";
+  try {
+    const trimmed = isoOrDateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-").map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      return dateObj.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+    const d = new Date(trimmed);
+    if (isNaN(d.getTime())) return isoOrDateStr;
+    return d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return isoOrDateStr;
+  }
+};
+
+const computeAgingDays = (subDate?: string, createdAt?: string, dos?: string): number => {
+  const refDateStr = subDate || createdAt || dos;
+  if (!refDateStr) return 0;
+  try {
+    const trimmed = refDateStr.trim();
+    let ref: Date;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-").map(Number);
+      ref = new Date(y, m - 1, d);
+    } else {
+      ref = new Date(trimmed);
+    }
+    if (isNaN(ref.getTime())) return 0;
+    const now = new Date();
+    const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const refMidnight = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate()).getTime();
+    const diffMs = nowMidnight - refMidnight;
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    return Math.max(0, days);
+  } catch {
+    return 0;
+  }
 };
 
 const payerRules = [
@@ -890,6 +976,7 @@ const getRarcInfo = (carcCode: string) => {
 function ClaimDetail({
   claimId,
   denials,
+  appeals = [],
   onBack,
   onUpdateStatus,
   onRefresh,
@@ -897,6 +984,7 @@ function ClaimDetail({
 }: {
   claimId: string;
   denials: Denial[];
+  appeals?: AppealItem[];
   onBack: () => void;
   onUpdateStatus: (id: string, newStatus: ClaimStatus) => void;
   onRefresh?: () => void;
@@ -913,15 +1001,18 @@ function ClaimDetail({
     carcDescription: "Missing required clinical documentation",
     rarcCode: "N290",
     groupCode: "CO" as const,
-    agingDays: 1,
+    agingDays: 0,
     deadline: "30 days",
     deadlineDays: 30,
     assignedTo: getCurrentUser().name || "Maya Alvarez",
     avatar: "MA",
     department: "Orthopedics",
+    createdAt: new Date().toISOString(),
+    submissionDate: new Date().toISOString(),
   };
 
   const [claim, setClaim] = useState<Denial>(baseClaim);
+  const [isStartingAppeal, setIsStartingAppeal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; date: string }[]>([]);
   const [notes, setNotes] = useState<string[]>([
@@ -929,6 +1020,13 @@ function ClaimDetail({
   ]);
   const [noteInput, setNoteInput] = useState("");
   const [showAddNote, setShowAddNote] = useState(false);
+
+  const activeAppeal = appeals.find((a) => a.claim_id === claimId && a.status !== "resolved");
+  const claimAppeal = appeals.find((a) => a.claim_id === claimId);
+
+  useEffect(() => {
+    if (onRefresh) onRefresh();
+  }, [claimId]);
 
   useEffect(() => {
     const found = denials.find((item) => item.id === claimId);
@@ -943,7 +1041,7 @@ function ClaimDetail({
           setUploadedFiles(
             docs.map((d: any) => ({
               name: d.document_title || d.name || "Document",
-              date: d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently",
+              date: d.uploaded_at ? formatLocalTimestamp(d.uploaded_at) : "Recently",
             }))
           );
         } else {
@@ -967,7 +1065,8 @@ function ClaimDetail({
 
     try {
       const res = await uploadClaimDocument(claim.id, file, "operative_report");
-      setUploadedFiles(prev => [{ name: file.name, date: "Just now" }, ...prev]);
+      const uploadTimeStr = formatLocalTimestamp(new Date().toISOString());
+      setUploadedFiles(prev => [{ name: file.name, date: uploadTimeStr }, ...prev]);
 
       if (res.new_prediction) {
         setClaim(prev => ({
@@ -982,6 +1081,9 @@ function ClaimDetail({
       toast.success("Document uploaded & prediction re-calculated", {
         description: `Attached ${file.name}. Denial risk updated in real time.`,
       });
+
+      // Live refresh so appeals pipeline card counts and worklists update instantly
+      if (onRefresh) onRefresh();
     } catch (err: any) {
       toast.error("Upload failed", { description: err.message });
     }
@@ -998,36 +1100,63 @@ function ClaimDetail({
         <div>
           <div className="eyebrow">Claim record / {claim.department}</div>
           <h1>{claim.id}</h1>
-          <p>{claim.patientRef} <span>·</span> {claim.payer} <span>·</span> submitted Aug 22, 2026</p>
+          <p>
+            {claim.patientRef} <span>·</span> {claim.payer} <span>·</span> submitted {formatLocalDate(claim.submissionDate || claim.createdAt)}
+          </p>
         </div>
         <div className="detail-actions">
-          <Button
-            variant="secondary"
-            icon={FileCheck2}
-            onClick={async () => {
-              try {
-                const appeal = await createAppeal({
-                  claim_id: claim.id,
-                  appeal_level: "Level 1",
-                  notes: `Initiated appeal from claim record for ${claim.payer}.`,
-                });
-                onUpdateStatus(claim.id, "appealed");
-                toast.success("Appeal started", { description: `Appeal ${appeal.id} created in Drafting column.` });
-                if (onRefresh) onRefresh();
-                if (onNavigate) onNavigate("/appeals");
-              } catch (err: any) {
-                toast.error("Failed to start appeal", { description: err.message });
-              }
-            }}
-          >
-            Start appeal
-          </Button>
+          {activeAppeal ? (
+            <Button
+              variant="secondary"
+              icon={FileCheck2}
+              onClick={() => onNavigate ? onNavigate("/appeals") : null}
+            >
+              View appeal ({activeAppeal.id})
+            </Button>
+          ) : isCleanClaim ? (
+            <Button
+              variant="secondary"
+              icon={ShieldCheck}
+              disabled
+              className="opacity-70 cursor-not-allowed"
+            >
+              Clean claim (No appeal needed)
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              icon={FileCheck2}
+              disabled={isStartingAppeal}
+              onClick={async () => {
+                if (isStartingAppeal) return;
+                setIsStartingAppeal(true);
+                try {
+                  const appeal = await createAppeal({
+                    claim_id: claim.id,
+                    appeal_level: "Level 1",
+                    notes: `Initiated appeal from claim record for ${claim.payer}.`,
+                  });
+                  onUpdateStatus(claim.id, "appealed");
+                  toast.success("Appeal started", { description: `Appeal ${appeal.id} created in Drafting column.` });
+                  if (onRefresh) onRefresh();
+                  if (onNavigate) onNavigate("/appeals");
+                } catch (err: any) {
+                  toast.error("Failed to start appeal", { description: err.message });
+                } finally {
+                  setIsStartingAppeal(false);
+                }
+              }}
+            >
+              {isStartingAppeal ? "Starting appeal..." : "Start appeal"}
+            </Button>
+          )}
           <Button
             icon={CheckCircle2}
             onClick={async () => {
               await submitClaimOutcome(claim.id, "paid");
               onUpdateStatus(claim.id, "paid");
               toast.success("Claim marked paid", { description: "Adjudication outcome recorded." });
+              if (onRefresh) onRefresh();
             }}
           >
             Mark paid
@@ -1044,7 +1173,7 @@ function ClaimDetail({
             </div>
             <div className="summary-grid">
               <div><span>Denied amount</span><strong>{money(claim.billedAmount)}</strong></div>
-              <div><span>CARC / group</span><strong>{claim.carcCode} <em>{claim.groupCode}</em></strong></div>
+              <div><span>CARC / group</span><strong>{claim.carcCode}{!isCleanClaim && claim.groupCode ? <em> {claim.groupCode}</em> : null}</strong></div>
               <div><span>Aging</span><strong className="text-coral">{claim.agingDays} days</strong></div>
               <div><span>Appeal deadline</span><strong className={claim.deadlineDays <= 6 ? "text-coral" : "text-gold"}>{claim.deadline}</strong></div>
             </div>
@@ -1052,7 +1181,7 @@ function ClaimDetail({
               <div className="code-callout-badge">{claim.carcCode}</div>
               <div>
                 <strong>{claim.carcDescription}</strong>
-                {rarcInfo && (
+                {!isCleanClaim && rarcInfo && (
                   <p>RARC {rarcInfo.code} · {rarcInfo.description}</p>
                 )}
               </div>
@@ -1064,14 +1193,51 @@ function ClaimDetail({
               <div><span className="eyebrow">Lifecycle</span><h2>Claim timeline</h2></div>
             </div>
             <div className="timeline">
-              <div className="timeline-item complete"><div className="timeline-node"><Check size={13} /></div><div><strong>Submitted</strong><span>Aug 22, 2026 · 09:14 AM</span></div></div>
-              <div className="timeline-item current"><div className="timeline-node"><AlertCircle size={13} /></div><div><strong>Evaluated · {claim.carcCode}</strong><span>{claim.carcDescription}</span></div></div>
+              <div className="timeline-item complete">
+                <div className="timeline-node"><Check size={13} /></div>
+                <div>
+                  <strong>Submitted</strong>
+                  <span>{formatLocalTimestamp(claim.submissionDate || claim.createdAt)} · Initial EDI 837 transmission</span>
+                </div>
+              </div>
+
+              <div className="timeline-item complete">
+                <div className="timeline-node"><AlertCircle size={13} /></div>
+                <div>
+                  <strong>Evaluated · {claim.carcCode}</strong>
+                  <span>{formatLocalTimestamp(claim.createdAt)} · {claim.carcDescription}</span>
+                </div>
+              </div>
+
               {uploadedFiles.map((doc, idx) => (
                 <div className="timeline-item complete" key={idx}>
                   <div className="timeline-node"><Check size={13} /></div>
-                  <div><strong>Document attached · {doc.name}</strong><span>{doc.date} · Operative record</span></div>
+                  <div>
+                    <strong>Document attached · {doc.name}</strong>
+                    <span>{doc.date} · Clinical record attached</span>
+                  </div>
                 </div>
               ))}
+
+              {claimAppeal && (
+                <div className={`timeline-item ${claimAppeal.status === "resolved" ? "complete" : "current"}`}>
+                  <div className="timeline-node"><FileCheck2 size={13} /></div>
+                  <div>
+                    <strong>Appeal {claimAppeal.id} · {claimAppeal.appeal_level}</strong>
+                    <span>{formatLocalTimestamp(claimAppeal.created_at)} · Status: {claimAppeal.status.replace("_", " ")}</span>
+                  </div>
+                </div>
+              )}
+
+              {claim.actualOutcome && (
+                <div className="timeline-item complete">
+                  <div className="timeline-node"><CheckCircle2 size={13} /></div>
+                  <div>
+                    <strong>Adjudication outcome · {claim.actualOutcome === "paid" ? "Paid" : "Denied"}</strong>
+                    <span>Final outcome recorded</span>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
@@ -1225,6 +1391,25 @@ function Appeals({
       toast.error("Please select a claim to appeal");
       return;
     }
+
+    const alreadyActive = appeals.find(
+      (a) => a.claim_id === selectedClaimId && a.status !== "resolved"
+    );
+    if (alreadyActive) {
+      toast.error("Active appeal already exists", {
+        description: `Claim ${selectedClaimId} is already in '${alreadyActive.status}' stage (${alreadyActive.id}).`,
+      });
+      return;
+    }
+
+    const targetDenial = denials.find((d) => d.id === selectedClaimId);
+    if (targetDenial && (targetDenial.carcCode === "CLEAN" || targetDenial.status === "paid")) {
+      toast.error("Cannot appeal a clean claim", {
+        description: `Claim ${selectedClaimId} is marked CLEAN with no denial risk. Appeals can only be initiated for denied claims.`,
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       await createAppeal({
@@ -1294,7 +1479,7 @@ function Appeals({
                     <strong>{appeal.claim_id}</strong>
                     <span className="appeal-payer">{appeal.payer}</span>
                     <div className="appeal-card-meta">
-                      <span><Paperclip size={13} /> {appeal.attached_document_ids?.length || 0} docs attached</span>
+                      <span><Paperclip size={13} /> {appeal.attached_document_ids?.length || (appeal as any).docs_attached || 0} docs attached</span>
                     </div>
                     {appeal.notes && <p className="mt-2 text-[11px] text-[#7C8A9C] italic">"{appeal.notes}"</p>}
                     <div className="mt-3 flex gap-1 pt-2 border-t border-[#EEF2F6]">
@@ -1337,9 +1522,15 @@ function Appeals({
                   required
                 >
                   {denials.length === 0 && <option value="">No claims available — score a claim first</option>}
-                  {denials.map((d) => (
-                    <option key={d.id} value={d.id}>{d.id} — {d.payer} ({money(d.billedAmount)})</option>
-                  ))}
+                  {denials.map((d) => {
+                    const hasActive = appeals.some((a) => a.claim_id === d.id && a.status !== "resolved");
+                    const isClean = d.carcCode === "CLEAN" || d.status === "paid";
+                    return (
+                      <option key={d.id} value={d.id} disabled={hasActive || isClean}>
+                        {d.id} — {d.payer} ({money(d.billedAmount)}) {isClean ? " [Clean Claim - No Appeal Needed]" : hasActive ? " [Appeal Active]" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -2011,12 +2202,16 @@ export default function Home() {
         carcDescription: row.suggested_corrective_action || (row.predicted_carc_code === "CLEAN" ? "Claim validation passed with low denial risk. Ready for clean EDI submission." : "Pre-submission review recommended"),
         rarcCode: row.predicted_carc_code === "CO-16" ? "N290" : row.predicted_carc_code === "CO-197" ? "N54" : row.predicted_carc_code === "CO-27" ? "N30" : row.predicted_carc_code === "CO-29" ? "N130" : row.predicted_carc_code === "CO-45" ? "N14" : "",
         groupCode: "CO",
-        agingDays: row.days_to_filing_deadline ? Math.max(1, 90 - row.days_to_filing_deadline) : 1,
+        agingDays: computeAgingDays(row.submission_date, row.created_at, row.dos),
         deadline: `${row.days_to_filing_deadline !== undefined && row.days_to_filing_deadline !== null ? row.days_to_filing_deadline : 30} days`,
         deadlineDays: row.days_to_filing_deadline !== undefined && row.days_to_filing_deadline !== null ? Number(row.days_to_filing_deadline) : 30,
         assignedTo: "Maya Alvarez",
         avatar: "MA",
         department: row.provider_specialty || "Orthopedics",
+        createdAt: row.created_at || new Date().toISOString(),
+        submissionDate: row.submission_date || row.dos || row.created_at,
+        dos: row.dos,
+        actualOutcome: row.actual_outcome,
       }));
 
       setDenials(mappedDenials);
@@ -2075,6 +2270,7 @@ export default function Home() {
         <ClaimDetail
           claimId={targetId}
           denials={denials}
+          appeals={appeals}
           onBack={() => setLocation("/worklist")}
           onUpdateStatus={handleUpdateStatus}
           onRefresh={loadData}
