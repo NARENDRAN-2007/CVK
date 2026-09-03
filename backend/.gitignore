@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Environment Variables
+.env
+.env.local
+*.env
+!.env.example
+
+# Generated ML Models and Datasets
+*.pkl
+app/model/model.pkl
+app/model/feature_lookups.pkl
+data/synthetic_claims.csv
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

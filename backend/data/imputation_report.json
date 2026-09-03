@@ -1,0 +1,108 @@
+{
+  "dataset_source": "cleaned_claims_final.csv",
+  "original_rows": 120000,
+  "rows_dropped_missing_label": 0,
+  "final_training_rows": 120000,
+  "per_field_stats": {
+    "claim_id": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "claim_type": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "payer": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "plan_type": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "eligibility_status": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "provider_specialty": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "network_status": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "icd10_code": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "cpt_code": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "modifiers": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "pos_code": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "units_billed": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "charge_amount": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "pa_status": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "referral_status": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "documentation_flag": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "dos": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "submission_date": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "days_to_filing_deadline": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    },
+    "cob_flag": {
+      "missing_count": 0,
+      "missing_percentage": 0.0,
+      "imputation_method": "none (100% real)"
+    }
+  }
+}
