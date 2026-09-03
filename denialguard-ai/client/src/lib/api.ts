@@ -192,7 +192,7 @@ export async function predictClaim(claim: ClaimInput): Promise<PredictionRespons
     network_status: claim.networkStatus || "In-Network",
     icd10_code: claim.icd10 || "M17.11",
     cpt_code: claim.cpt || "27447",
-    modifiers: claim.modifiers || "",
+    modifiers: claim.modifiers || "None",
     pos_code: claim.posCode || "11",
     units_billed: Number(claim.unitsBilled) || 1,
     charge_amount: Number(claim.chargeAmount) || 18450,

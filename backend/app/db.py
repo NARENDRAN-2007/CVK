@@ -2,11 +2,21 @@ import os
 import uuid
 import secrets
 import logging
-from datetime import datetime, timezone, timedelta
+from decimal import Decimal
+from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Dict, Any, Tuple
 from dotenv import load_dotenv
 
-load_dotenv()
+# Try loading from backend/.env, current dir .env, or data/.env
+env_paths = [
+    os.path.join(os.path.dirname(__file__), "..", ".env"),
+    os.path.join(os.path.dirname(__file__), "..", "data", ".env"),
+    os.path.join(os.getcwd(), ".env"),
+    os.path.join(os.getcwd(), "backend", ".env")
+]
+for p in env_paths:
+    if os.path.exists(p):
+        load_dotenv(p)
 
 logger = logging.getLogger("denialguard.db")
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +26,44 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
 _supabase_client = None
 _is_live_mode = False
+
+
+def _deep_sanitize(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, (date, datetime)):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _deep_sanitize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_deep_sanitize(elem) for elem in obj]
+    return obj
+
+
+def _sanitize_claim_row_for_supabase(d: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_cols = {
+        "claim_id", "claim_type", "payer", "plan_type", "eligibility_status",
+        "provider_specialty", "network_status", "icd10_code", "cpt_code",
+        "modifiers", "pos_code", "units_billed", "charge_amount", "pa_status",
+        "referral_status", "documentation_flag", "dos", "submission_date",
+        "days_to_filing_deadline", "cob_flag", "hist_denial_rate_cpt_payer",
+        "hist_denial_rate_provider_payer", "claim_amount_deviation",
+        "predicted_risk_score", "predicted_carc_code", "top_contributing_factors",
+        "suggested_corrective_action", "actual_outcome", "denial_flag"
+    }
+    out = {}
+    for k, v in d.items():
+        if k not in allowed_cols:
+            continue
+        if isinstance(v, Decimal):
+            out[k] = float(v)
+        elif isinstance(v, (date, datetime)):
+            out[k] = str(v)
+        elif isinstance(v, (list, dict)):
+            out[k] = _deep_sanitize(v)
+        else:
+            out[k] = v
+    return out
 
 
 def init_db():
@@ -138,10 +186,11 @@ def insert_user(user_data: Dict[str, Any]) -> bool:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("users").insert(user_data).execute()
+            sanitized = _deep_sanitize(user_data)
+            client.table("users").insert(sanitized).execute()
             return True
         except Exception as e:
-            logger.error(f"Failed to insert user into Supabase: {e}")
+            logger.error(f"Failed to insert user into Supabase for '{normalized_email}': {e}")
             return False
 
     return True
@@ -155,10 +204,12 @@ def insert_claim_log(row_data: Dict[str, Any]) -> bool:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("claims_log").upsert(row_data, on_conflict="claim_id").execute()
+            sanitized = _sanitize_claim_row_for_supabase(row_data)
+            client.table("claims_log").upsert(sanitized, on_conflict="claim_id").execute()
             return True
         except Exception as e:
-            logger.error(f"Failed to upsert row into Supabase claims_log: {e}")
+            claim_id = row_data.get("claim_id", "UNKNOWN")
+            logger.error(f"Failed to upsert row into Supabase claims_log for claim_id={claim_id}: {e}")
             return False
     return True
 
@@ -175,10 +226,11 @@ def upsert_claim_log(claim_data: Dict[str, Any]) -> bool:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("claims_log").upsert(claim_data, on_conflict="claim_id").execute()
+            sanitized = _sanitize_claim_row_for_supabase(claim_data)
+            client.table("claims_log").upsert(sanitized, on_conflict="claim_id").execute()
             return True
         except Exception as e:
-            logger.error(f"Supabase upsert error on claims_log: {e}")
+            logger.error(f"Supabase upsert error on claims_log for claim_id={claim_id}: {e}")
             return False
     return True
 
@@ -394,7 +446,8 @@ def insert_appeal(appeal_data: Dict[str, Any]) -> Dict[str, Any]:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            client.table("appeals").insert(appeal_data).execute()
+            sanitized = _deep_sanitize(appeal_data)
+            client.table("appeals").insert(sanitized).execute()
         except Exception as e:
             logger.warning(f"Could not insert appeal into Supabase: {e}")
 

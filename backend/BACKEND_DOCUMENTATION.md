@@ -123,25 +123,25 @@ backend/
 ## 4. Machine Learning & Explainability Pipeline
 
 ### Feature Set (20 Raw Inputs + 3 Engineered Features)
-The inference engine consumes 20 standard CMS-1500 / UB-04 claim fields:
+The inference engine consumes 20 standard CMS-1500 / UB-04 claim fields validated via strict Pydantic `Literal[...]` types:
 
-| Field | Type | Description | Example / Allowed Values |
+| Field | Type | Description | Allowed / Canonical Values |
 | :--- | :--- | :--- | :--- |
 | `claim_id` | `string` | Unique claim identifier (auto-generated if omitted) | `"CLM-2026-08397"` |
-| `claim_type` | `string` | Type of health insurance claim | `"Professional"`, `"Institutional"`, `"Dental"`, `"Vision"` |
-| `payer` | `string` | Payer / Insurance carrier name | `"Medicare"`, `"Medicaid"`, `"UnitedHealthcare"`, `"BlueCross"`, `"Aetna"`, `"Cigna"`, `"Humana"` |
-| `plan_type` | `string` | Health plan benefit category | `"HMO"`, `"PPO"`, `"EPO"`, `"POS"`, `"Medicare Advantage"` |
-| `eligibility_status` | `string` | Patient insurance eligibility on Date of Service | `"Active"`, `"Inactive"`, `"Pending"`, `"Terminated"` |
-| `provider_specialty` | `string` | Medical provider specialty | `"Cardiology"`, `"Orthopedics"`, `"General Practice"`, `"Dermatology"`, etc. |
-| `network_status` | `string` | Provider in-network status with target payer | `"In-Network"`, `"Out-of-Network"` |
-| `icd10_code` | `string` | Primary ICD-10 diagnosis code | `"I10"`, `"E11.9"`, `"M25.50"`, `"M54.5"` |
-| `cpt_code` | `string` | Primary CPT / HCPCS procedure code | `"99213"`, `"99214"`, `"27447"`, `"99285"` |
+| `claim_type` | `Literal` | Type of health insurance claim | `"Professional"`, `"Institutional"`, `"Dental"`, `"Vision"` |
+| `payer` | `Literal` | Payer / Insurance carrier name | `"Medicare"`, `"Medicaid"`, `"UnitedHealthcare"`, `"BlueCross"`, `"Aetna"`, `"Cigna"`, `"Humana"` |
+| `plan_type` | `Literal` | Health plan benefit category | `"HMO"`, `"PPO"`, `"EPO"`, `"POS"`, `"Medicare Advantage"`, `"Commercial"` |
+| `eligibility_status` | `Literal` | Patient insurance eligibility on Date of Service | `"Active"`, `"Inactive"`, `"Pending"`, `"Terminated"` |
+| `provider_specialty` | `Literal` | Medical provider specialty | `"Cardiology"`, `"Orthopedics"`, `"General Practice"`, `"Dermatology"`, `"Oncology"`, `"Radiology"`, `"Neurology"`, `"Internal Medicine"`, `"Emergency Medicine"` |
+| `network_status` | `Literal` | Provider in-network status with target payer | `"In-Network"`, `"Out-of-Network"` |
+| `icd10_code` | `string` | Primary ICD-10 diagnosis code | `"I10"`, `"E11.9"`, `"M25.50"`, `"M17.11"`, `"M54.5"` |
+| `cpt_code` | `string` | Primary CPT / HCPCS procedure code | `"99213"`, `"99214"`, `"27447"`, `"99285"`, `"20610"` |
 | `modifiers` | `string` | CPT procedure modifier(s) | `"None"`, `"25"`, `"59"`, `"LT"`, `"RT"` |
 | `pos_code` | `string` | CMS Place of Service code | `"11"` (Office), `"21"` (Inpatient), `"22"` (Outpatient), `"23"` (ER), `"02"` (Telehealth) |
-| `units_billed` | `integer` | Billed procedure units (ge: 1) | `1`, `2`, `4` |
-| `charge_amount` | `float` | Total billed dollar charge amount (> 0) | `5200.00` |
-| `pa_status` | `string` | Prior Authorization status | `"Approved"`, `"Missing"`, `"Denied"`, `"Not Required"`, `"Pending"` |
-| `referral_status` | `string` | PCP referral status | `"Active"`, `"Missing"`, `"Not Required"`, `"Expired"` |
+| `units_billed` | `integer` | Billed procedure units ($\ge 1$) | `1`, `2`, `4` |
+| `charge_amount` | `float` | Total billed dollar charge amount ($> 0$) | `4500.00` |
+| `pa_status` | `Literal` | Prior Authorization status | `"Approved"`, `"Missing"`, `"Denied"`, `"Not Required"`, `"Pending"` |
+| `referral_status` | `Literal` | PCP referral status | `"Active"`, `"Missing"`, `"Not Required"`, `"Expired"` |
 | `documentation_flag` | `boolean` | Flag indicating attached clinical chart notes | `true` or `false` |
 | `dos` | `date` | Date of Service (`YYYY-MM-DD`) | `"2026-06-01"` |
 | `submission_date` | `date` | Target Claim Submission Date (`YYYY-MM-DD`) | `"2026-08-25"` |
@@ -149,32 +149,34 @@ The inference engine consumes 20 standard CMS-1500 / UB-04 claim fields:
 | `cob_flag` | `boolean` | Coordination of Benefits flag | `true` or `false` |
 
 #### 3 Engineered Features (Pre-computed Lookup Matrix):
-1. `hist_denial_rate_cpt_payer`: Historical denial frequency for the specific CPT-Payer combination.
-2. `hist_denial_rate_provider_payer`: Historical denial rate for the Provider Specialty-Payer combination.
-3. `claim_amount_deviation`: Ratio of billed `charge_amount` relative to the historical median benchmark for that procedure code and specialty.
+1. `hist_denial_rate_cpt_payer`: Historical denial frequency for the specific `cpt_code::payer` combination.
+2. `hist_denial_rate_provider_payer`: Historical denial rate for the `provider_specialty::payer` combination.
+3. `claim_amount_deviation`: Percentage deviation of the billed `charge_amount` relative to the mean benchmark charge for that specific procedure and payer:
+   $$\text{claim\_amount\_deviation} = \left(\frac{\text{charge\_amount} - \overline{\text{charge}}_{\text{cpt, payer}}}{\overline{\text{charge}}_{\text{cpt, payer}}}\right) \times 100\%$$
 
 ---
 
 ### SHAP TreeExplainer & Root Cause Attribution
 - Computes exact local Shapley values using `shap.TreeExplainer` on the trained XGBoost tree ensemble.
-- Translates raw feature impacts into human-readable billing explanations (e.g., *"Clinical Documentation Attached"*, *"Prior Authorization Status"*, *"Timely Filing Deadline Margin"*).
+- Translates raw feature impacts into human-readable billing explanations (e.g., *"Clinical Documentation Attached"*, *"Prior Authorization Status"*, *"Patient Eligibility Status"*, *"Charge Amount Variance"*, *"Timely Filing Deadline Margin"*).
 - Ranks contributing factors by absolute SHAP impact and classifies whether each factor `increases_risk` or `decreases_risk`.
 
 ---
 
-### CARC Forecasting & Corrective Action Rules
-When high risk is detected, the engine maps feature patterns to standard Claim Adjustment Reason Codes (CARC):
+### SHAP-Driven CARC Forecasting & Corrective Action Rules
+When high risk is detected ($\text{risk\_score} \ge \text{CLEAN\_RISK\_THRESHOLD} = 35.0\%$), `determine_carc_and_action()` consults `top_factors` to identify the top risk-increasing SHAP driver and maps it to the standard Claim Adjustment Reason Code (CARC):
 
-| CARC Code | Code Description | Trigger Conditions | Corrective Action Recommendation |
-| :--- | :--- | :--- | :--- |
-| **`CO-197`** | Precertification / Prior Authorization Absent | High risk & `pa_status` in `['Missing', 'Denied', 'Pending']` | *"Attach approved Prior Authorization reference number to box 23 before submitting."* |
-| **`CO-16`** | Missing Documentation / Information | High risk & `documentation_flag == False` | *"Attach mandatory clinical chart notes and operative reports to substantiate medical necessity."* |
-| **`CO-27`** | Expenses Incurred After Coverage Terminated | High risk & `eligibility_status` in `['Inactive', 'Terminated']` | *"Re-verify active subscriber policy with payer before submitting; eligibility is inactive on DOS."* |
-| **`CO-29`** | Timely Filing Limit Expired | High risk & `days_to_filing_deadline <= 7` | *"Expedite immediate submission — claim is within timely filing cutoff window."* |
-| **`CO-50`** | Non-Covered Service / Plan Exclusion | High risk & `plan_type == 'HMO'` & `network_status == 'Out-of-Network'` | *"Obtain Out-of-Network authorization or transition to in-network facility under HMO rules."* |
-| **`CO-97`** | Bundled Procedure / Missing Modifier | High risk & modifier missing for multi-unit or complex surgical CPT | *"Review NCCI edit tables and attach appropriate modifier (e.g., -25 or -59) to prevent bundling denial."* |
-| **`CO-4`** | Procedure / Modifier Inconsistency | High risk & general modifier inconsistency | *"Verify modifier compatibility with primary CPT code and diagnosis alignment."* |
-| **`CLEAN`** | Clean Claim (< 35% Risk Score) | Risk score < 35.0 | *"Claim parameters meet standard payer clean claim guidelines. Ready for submission."* |
+| Top SHAP Driver Feature | CARC Code | Code Description | Actionable Pre-Submission Recommendation |
+| :--- | :---: | :--- | :--- |
+| `pa_status` | **`CO-197`** | Precertification / Prior Authorization Absent | *"Pre-certification / Prior authorization absent, pending, or denied. Obtain prior authorization approval number from payer and append to Box 23/24."* |
+| `documentation_flag` | **`CO-16`** | Missing Documentation / Information | *"Claim lacks required clinical documentation. Attach medical records, operative notes, or lab reports supporting medical necessity."* |
+| `eligibility_status` | **`CO-27`** | Expenses Incurred After Coverage Terminated | *"Expenses incurred after coverage terminated or patient eligibility inactive. Re-verify active subscriber policy with payer before submitting."* |
+| `days_to_filing_deadline` | **`CO-29`** | Timely Filing Limit Expired | *"Submission is within X days of timely filing deadline. Expedite batch processing immediately to avoid time-limit denial."* |
+| `network_status` / `referral_status` | **`CO-50`** | Non-Covered Service / Plan Exclusion | *"Out-of-network service or missing PCP referral. Obtain and document formal referral authorization prior to billing."* |
+| `cpt_code` / `modifiers` | **`CO-4`** | Procedure / Modifier Inconsistency | *"Procedure code may require modifier for distinct procedural service. Review bundling edits and consider appending Modifier 25 or 59."* |
+| `claim_amount_deviation` / `charge_amount` | **`CO-45`** | Charge Amount Fee Schedule Variance | *"Charge amount exceeds expected fee schedule variance. Verify billed units and contracted rate schedule."* |
+| `hist_denial_rate_*` | **`CO-97`** | Historical Denial Pattern | *"Elevated historical denial pattern for this CPT/Payer combination. Conduct secondary audit on charge amounts and diagnostic coding alignment."* |
+| Score $< 35.0\%$ | **`CLEAN`** | Clean Claim (< 35% Risk Score) | *"Claim validation passed with low denial risk. Ready for clean EDI submission."* |
 
 ---
 
@@ -554,8 +556,12 @@ python -m pip install -r requirements.txt
 ### Step 2: (Optional) Run Database Migration
 If connecting to a live Supabase project, execute [`supabase_users_migration.sql`](file:///c:/Users/kayel/my-hackathon-project/backend/supabase_users_migration.sql) in your Supabase SQL Editor. If skipped, the backend operates in resilient offline mode with default seed accounts.
 
-### Step 3: Run Verification Suite
+### Step 3: Run Verification Suites
 ```powershell
+# Run ML, schema validation, and priority fixes verification
+python -u test_fixes_verification.py
+
+# Run comprehensive backend auth & API verification
 python -u test_backend.py
 ```
 Expected output:
@@ -566,8 +572,8 @@ Expected output:
 [TEST 3] Testing POST /auth/login with invalid password: PASS (401 Unauthorized)
 [TEST 4] Testing GET /auth/me with Bearer token: PASS (200 OK)
 [TEST 5] Testing route protection without token: PASS (401 Unauthorized)
-[TEST 6] Testing POST /predict with High-Risk Claim: PASS (Risk: 100.0%, CARC: CO-27)
-[TEST 7] Testing POST /predict with Clean/Low-Risk Claim: PASS (Risk: 34.0%, Clean)
+[TEST 6] Testing POST /predict with High-Risk Claim: PASS (Risk: 100.0%, CARC: CO-16)
+[TEST 7] Testing POST /predict with Clean/Low-Risk Claim: PASS (Risk: 32.9%, Clean)
 [TEST 8] Testing POST /submit-outcome for existing claim: PASS (200 OK)
 [TEST 9] Testing POST /submit-outcome for non-existent claim: PASS (404 Not Found)
 [TEST 10] Testing GET /claims-log: PASS (200 OK)
@@ -581,3 +587,4 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 - Interactive Swagger UI: `http://localhost:8000/docs`
 - OpenAPI Specification: `http://localhost:8000/openapi.json`
+

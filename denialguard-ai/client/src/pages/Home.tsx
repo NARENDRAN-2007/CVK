@@ -120,9 +120,11 @@ export type Denial = {
 
 const payerRules = [
   { name: "Aetna", initials: "AE", color: "#5B8CBF", filing: "180 days", auth: "Prior auth for advanced imaging, elective surgery", appeal: "180 days", method: "Provider portal" },
+  { name: "BlueCross", initials: "BC", color: "#5B8CBF", filing: "180 days", auth: "Prior auth for surgical & specialty procedures", appeal: "180 days", method: "Availity portal" },
   { name: "Cigna", initials: "CI", color: "#8B7EC8", filing: "180 days", auth: "Auth required for PT after visit 6", appeal: "180 days", method: "Fax / portal" },
   { name: "Humana", initials: "HU", color: "#C9A24B", filing: "365 days", auth: "Auth for inpatient and DME", appeal: "60 days", method: "Provider portal" },
-  { name: "Medicare Part B", initials: "MB", color: "#5FAE93", filing: "1 year", auth: "LCD/NCD-specific; check MAC", appeal: "120 days", method: "Electronic" },
+  { name: "Medicaid", initials: "MD", color: "#5FAE93", filing: "90 days", auth: "Prior auth for specialized clinical care", appeal: "90 days", method: "State portal" },
+  { name: "Medicare", initials: "MC", color: "#5FAE93", filing: "1 year", auth: "LCD/NCD-specific; check MAC", appeal: "120 days", method: "Electronic" },
   { name: "UnitedHealthcare", initials: "UH", color: "#C77B7B", filing: "90 days", auth: "Prior auth for surgery and specialty drugs", appeal: "180 days", method: "UHC Link" },
 ];
 
@@ -586,7 +588,7 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
     } else if (presetType === "filing_limit") {
       setForm({
         payer: "Cigna",
-        providerSpecialty: "Rehab Services",
+        providerSpecialty: "Orthopedics",
         cpt: "97110",
         icd10: "M54.5",
         paStatus: "Approved",
@@ -599,7 +601,7 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
     } else if (presetType === "missing_doc") {
       setForm({
         payer: "Humana",
-        providerSpecialty: "Hospital Medicine",
+        providerSpecialty: "Internal Medicine",
         cpt: "99223",
         icd10: "J18.9",
         paStatus: "Not Required",
@@ -714,10 +716,22 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
               <select value={form.providerSpecialty} onChange={(e) => setForm({ ...form, providerSpecialty: e.target.value })}>
                 <option value="Orthopedics">Orthopedics</option>
                 <option value="Cardiology">Cardiology</option>
-                <option value="Pain Medicine">Pain Medicine</option>
-                <option value="Rehab Services">Rehab Services</option>
-                <option value="Hospital Medicine">Hospital Medicine</option>
-                <option value="Primary Care">Primary Care</option>
+                <option value="General Practice">General Practice</option>
+                <option value="Dermatology">Dermatology</option>
+                <option value="Oncology">Oncology</option>
+                <option value="Radiology">Radiology</option>
+                <option value="Neurology">Neurology</option>
+                <option value="Internal Medicine">Internal Medicine</option>
+                <option value="Emergency Medicine">Emergency Medicine</option>
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Eligibility Status</label>
+              <select value={form.eligibilityStatus} onChange={(e) => setForm({ ...form, eligibilityStatus: e.target.value })}>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+                <option value="Pending">Pending</option>
+                <option value="Terminated">Terminated</option>
               </select>
             </div>
             <div className="form-field">
@@ -731,10 +745,10 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
             <div className="form-field">
               <label>Prior Authorization</label>
               <select value={form.paStatus} onChange={(e) => setForm({ ...form, paStatus: e.target.value })}>
-                <option value="Missing">Missing / Absent</option>
-                <option value="Approved">Approved / Verified</option>
-                <option value="Pending">Pending Decision</option>
-                <option value="Denied">Denied by Payer</option>
+                <option value="Missing">Missing</option>
+                <option value="Approved">Approved</option>
+                <option value="Pending">Pending</option>
+                <option value="Denied">Denied</option>
                 <option value="Not Required">Not Required</option>
               </select>
             </div>
@@ -825,11 +839,15 @@ function ClaimDetail({
   denials,
   onBack,
   onUpdateStatus,
+  onRefresh,
+  onNavigate,
 }: {
   claimId: string;
   denials: Denial[];
   onBack: () => void;
   onUpdateStatus: (id: string, newStatus: ClaimStatus) => void;
+  onRefresh?: () => void;
+  onNavigate?: (path: string) => void;
 }) {
   const baseClaim = denials.find((item) => item.id === claimId) || {
     id: claimId,
@@ -924,9 +942,20 @@ function ClaimDetail({
           <Button
             variant="secondary"
             icon={FileCheck2}
-            onClick={() => {
-              onUpdateStatus(claim.id, "appealed");
-              toast.success("Appeal started", { description: "Claim moved to appealed status and draft opened." });
+            onClick={async () => {
+              try {
+                const appeal = await createAppeal({
+                  claim_id: claim.id,
+                  appeal_level: "Level 1",
+                  notes: `Initiated appeal from claim record for ${claim.payer}.`,
+                });
+                onUpdateStatus(claim.id, "appealed");
+                toast.success("Appeal started", { description: `Appeal ${appeal.id} created in Drafting column.` });
+                if (onRefresh) onRefresh();
+                if (onNavigate) onNavigate("/appeals");
+              } catch (err: any) {
+                toast.error("Failed to start appeal", { description: err.message });
+              }
             }}
           >
             Start appeal
@@ -1934,6 +1963,8 @@ export default function Home() {
           denials={denials}
           onBack={() => setLocation("/worklist")}
           onUpdateStatus={handleUpdateStatus}
+          onRefresh={loadData}
+          onNavigate={setLocation}
         />
       );
     }

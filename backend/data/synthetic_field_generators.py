@@ -10,15 +10,15 @@ from typing import Optional, Dict, Any
 import numpy as np
 
 # Standard Reference Vocabularies
-PAYERS = ["Medicare", "Medicaid", "UnitedHealthcare", "BlueCross", "Aetna", "Cigna", "Humana", "Commercial-A", "Commercial-B"]
-PLAN_TYPES = ["HMO", "PPO", "EPO", "POS", "Medicare Advantage"]
+PAYERS = ["Medicare", "Medicaid", "UnitedHealthcare", "BlueCross", "Aetna", "Cigna", "Humana"]
+PLAN_TYPES = ["HMO", "PPO", "EPO", "POS", "Medicare Advantage", "Commercial"]
 CLAIM_TYPES = ["Professional", "Institutional", "Dental", "Vision"]
 ELIGIBILITY_STATUSES = ["Active", "Inactive", "Pending", "Terminated"]
 PROVIDER_SPECIALTIES = [
     "Cardiology", "Orthopedics", "General Practice", "Dermatology", 
-    "Oncology", "Radiology", "Neurology", "Internal Medicine", "Emergency_Medicine", "Internal_Medicine"
+    "Oncology", "Radiology", "Neurology", "Internal Medicine", "Emergency Medicine"
 ]
-NETWORK_STATUSES = ["In-Network", "Out-of-Network", "In-network", "Out-of-network"]
+NETWORK_STATUSES = ["In-Network", "Out-of-Network"]
 
 ICD10_CODES = [
     "I10", "E11.9", "M54.5", "J45.909", "K21.9", "Z00.00", "R07.9", "M25.50", "N39.0", "S93.401A", "G89.29", "K57.30"
@@ -41,8 +41,9 @@ CPT_DEFINITIONS = {
 CPT_CODES = list(CPT_DEFINITIONS.keys())
 MODIFIERS = ["None", "25", "59", "LT", "RT", "76", "51", "GT", "79", "GQ"]
 POS_CODES = ["11", "21", "22", "23", "02", "2", "12", "31", "49"]
-PA_STATUSES = ["Approved", "Missing", "Denied", "Not Required", "Pending", "Obtained", "Not Obtained"]
-REFERRAL_STATUSES = ["Active", "Missing", "Not Required", "Expired", "Present"]
+PA_STATUSES = ["Approved", "Denied", "Missing", "Pending", "Not Required"]
+REFERRAL_STATUSES = ["Active", "Missing", "Not Required", "Expired"]
+
 
 
 def sample_claim_type(row: Optional[Dict[str, Any]] = None) -> str:

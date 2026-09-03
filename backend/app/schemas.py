@@ -4,27 +4,41 @@ from typing import List, Optional, Literal, Any, Dict
 from pydantic import BaseModel, Field
 
 
+PayerLiteral = Literal["Medicare", "Medicaid", "UnitedHealthcare", "BlueCross", "Aetna", "Cigna", "Humana"]
+PlanTypeLiteral = Literal["HMO", "PPO", "EPO", "POS", "Medicare Advantage", "Commercial"]
+ClaimTypeLiteral = Literal["Professional", "Institutional", "Dental", "Vision"]
+EligibilityStatusLiteral = Literal["Active", "Inactive", "Pending", "Terminated"]
+SpecialtyLiteral = Literal[
+    "Cardiology", "Orthopedics", "General Practice", "Dermatology",
+    "Oncology", "Radiology", "Neurology", "Internal Medicine", "Emergency Medicine"
+]
+NetworkStatusLiteral = Literal["In-Network", "Out-of-Network"]
+PAStatusLiteral = Literal["Approved", "Denied", "Missing", "Pending", "Not Required"]
+ReferralStatusLiteral = Literal["Active", "Missing", "Not Required", "Expired"]
+
+
 class ClaimInput(BaseModel):
     claim_id: Optional[str] = Field(default=None)
-    claim_type: str = Field(...)
-    payer: str = Field(...)
-    plan_type: str = Field(...)
-    eligibility_status: str = Field(...)
-    provider_specialty: str = Field(...)
-    network_status: str = Field(...)
+    claim_type: ClaimTypeLiteral = Field(default="Professional")
+    payer: PayerLiteral = Field(...)
+    plan_type: PlanTypeLiteral = Field(default="Commercial")
+    eligibility_status: EligibilityStatusLiteral = Field(default="Active")
+    provider_specialty: SpecialtyLiteral = Field(...)
+    network_status: NetworkStatusLiteral = Field(default="In-Network")
     icd10_code: str = Field(...)
     cpt_code: str = Field(...)
     modifiers: str = Field(default="None")
-    pos_code: str = Field(...)
+    pos_code: str = Field(default="11")
     units_billed: int = Field(default=1, ge=1)
     charge_amount: Decimal = Field(..., gt=0)
-    pa_status: str = Field(...)
-    referral_status: str = Field(default="Not Required")
+    pa_status: PAStatusLiteral = Field(default="Not Required")
+    referral_status: ReferralStatusLiteral = Field(default="Not Required")
     documentation_flag: bool = Field(...)
-    dos: date = Field(...)
-    submission_date: date = Field(...)
-    days_to_filing_deadline: int = Field(...)
+    dos: Optional[date] = Field(default=None)
+    submission_date: Optional[date] = Field(default=None)
+    days_to_filing_deadline: int = Field(default=45)
     cob_flag: bool = Field(default=False)
+
 
 
 class ContributingFactor(BaseModel):
@@ -39,6 +53,7 @@ class PredictionResponse(BaseModel):
     predicted_carc_code: str = Field(...)
     top_contributing_factors: List[ContributingFactor] = Field(...)
     suggested_corrective_action: str = Field(...)
+    persisted: bool = Field(default=True, description="Whether the claim was successfully persisted to the database")
 
 
 class SubmitOutcomeRequest(BaseModel):

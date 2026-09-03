@@ -71,7 +71,12 @@ async def upload_document(
         new_prediction_obj = PredictionResponse(**api_res)
 
         existing_claim.update(full_rec)
-        upsert_claim_log(existing_claim)
+        persisted = upsert_claim_log(existing_claim)
+        if not persisted:
+            import logging
+            logging.getLogger("denialguard.documents").warning(
+                f"[Documents] Re-evaluated claim {claim_id} but failed to persist updated record to Supabase."
+            )
 
         insert_notification({
             "workspace_id": workspace_id,

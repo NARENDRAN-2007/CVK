@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, status, HTTPException, Depends
 from ..schemas import ClaimInput, PredictionResponse
-from ..model.predict import predict_claim
+from ..model.predict import predict_claim, HIGH_RISK_ALERT_THRESHOLD
 from ..db import insert_claim_log, insert_notification
 from ..core.deps import get_current_user
 
@@ -26,9 +26,15 @@ def predict_claim_endpoint(
         workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
         full_record["workspace_id"] = workspace_id
 
-        insert_claim_log(full_record)
+        persisted = insert_claim_log(full_record)
+        if not persisted:
+            logger.warning(
+                f"[Predict] Claim prediction scored for claim_id={api_response.get('claim_id')} "
+                "but failed to persist to Supabase database (persisted=False)."
+            )
+        api_response["persisted"] = persisted
 
-        if api_response.get("risk_score", 0) >= 60.0:
+        if api_response.get("risk_score", 0) >= HIGH_RISK_ALERT_THRESHOLD:
             carc = api_response.get("predicted_carc_code", "CO-16")
             insert_notification({
                 "workspace_id": workspace_id,
@@ -39,6 +45,7 @@ def predict_claim_endpoint(
             })
 
         return PredictionResponse(**api_response)
+
     except Exception as e:
         logger.error(f"Inference error during /predict: {e}", exc_info=True)
         raise HTTPException(

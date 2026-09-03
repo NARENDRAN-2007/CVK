@@ -83,7 +83,12 @@ def train_model():
         for _, row in provider_payer_stats.iterrows()
     }
 
-    cpt_charge_stats = train_df.groupby("cpt_code")["charge_amount"].mean().to_dict()
+    cpt_payer_charge_stats = train_df.groupby(["cpt_code", "payer"])["charge_amount"].mean().to_dict()
+    cpt_payer_mean_charges = {
+        f"{cpt}::{payer}": float(mean_val)
+        for (cpt, payer), mean_val in cpt_payer_charge_stats.items()
+    }
+    cpt_mean_charges = train_df.groupby("cpt_code")["charge_amount"].mean().to_dict()
     global_mean_charge = float(train_df["charge_amount"].mean())
 
     feature_lookups = {
@@ -91,7 +96,8 @@ def train_model():
         "global_mean_charge": round(global_mean_charge, 2),
         "cpt_payer_denial_rates": cpt_payer_lookup,
         "provider_payer_denial_rates": provider_payer_lookup,
-        "cpt_mean_charges": cpt_charge_stats,
+        "cpt_payer_mean_charges": cpt_payer_mean_charges,
+        "cpt_mean_charges": cpt_mean_charges,
     }
 
     for d in [train_df, test_df]:
@@ -103,10 +109,14 @@ def train_model():
             lambda r: provider_payer_lookup.get(f"{r['provider_specialty']}::{r['payer']}", global_denial_rate),
             axis=1
         )
-        d["claim_amount_deviation"] = d.apply(
-            lambda r: round(r["charge_amount"] - cpt_charge_stats.get(r["cpt_code"], global_mean_charge), 2),
-            axis=1
-        )
+        def calc_claim_dev(row):
+            key = f"{row['cpt_code']}::{row['payer']}"
+            mean_c = cpt_payer_mean_charges.get(key, cpt_mean_charges.get(row['cpt_code'], global_mean_charge))
+            if mean_c > 0:
+                return round(((row["charge_amount"] - mean_c) / mean_c) * 100.0, 2)
+            return 0.0
+
+        d["claim_amount_deviation"] = d.apply(calc_claim_dev, axis=1)
 
     feature_columns = CATEGORICAL_FEATURES + NUMERICAL_FEATURES
     X_train = train_df[feature_columns]

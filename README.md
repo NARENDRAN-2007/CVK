@@ -1,6 +1,6 @@
 # DenialGuard AI — Healthcare Claim Denial Prevention Platform
 
-> **DenialGuard AI** is an AI-powered Healthcare Revenue Cycle Management (RCM) platform built with **FastAPI**, **XGBoost**, **SHAP**, **React 19**, and **Supabase**. It predicts medical claim denial risks prior to clearinghouse submission, isolates root causes with exact Shapley feature attribution, forecasts CARC reason codes, and generates prescriptive remediations to maximize reimbursement velocity.
+> **DenialGuard AI** is an AI-powered Healthcare Revenue Cycle Management (RCM) platform built with **FastAPI**, **XGBoost**, **SHAP**, **React 19**, and **Supabase**. It predicts medical claim denial risks prior to clearinghouse submission, isolates root causes with exact Shapley feature attribution, forecasts CARC reason codes tied to top SHAP drivers, and generates prescriptive remediations to maximize reimbursement velocity.
 
 ---
 
@@ -8,9 +8,11 @@
 
 - 🎯 **Pre-Submission Risk Scoring:** Instant claim denial risk calculation ($0.0–100.0\%$) in $<110\text{ms}$.
 - 🔬 **SHAP TreeExplainer Attribution:** Exact mathematical attribution for why a claim is flagged as high-risk.
-- 🏷️ **CARC Code Prediction:** Identifies the likely denial reason (`CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`).
-- 🛠️ **1-Click Clinical/Billing Fixes:** Actionable pre-submission fixes (prior auth numbers, clinical notes, NCCI modifier correction).
-- 📋 **Prioritized Worklist & Appeals Pipeline:** Intelligent claim triage queue and deadline-aware appeal pipeline.
+- 🏷️ **SHAP-Driven CARC Prediction:** Identifies the likely denial reason (`CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`, `CO-45`) tied directly to the top SHAP driver.
+- 🛠️ **1-Click Clinical/Billing Fixes:** Actionable pre-submission fixes (prior auth numbers, clinical notes, NCCI modifier correction, fee schedule adjustments).
+- 🛡️ **Canonical Vocabulary Enforcement:** Pydantic `Literal[...]` schema constraints prevent training vocabulary drift.
+- 📈 **Normalized CPT+Payer Deviation:** Percentage-based `claim_amount_deviation` feature computed against historical procedure/payer means.
+- 📋 **Prioritized Worklist & Appeals Pipeline:** Intelligent claim triage queue and deadline-aware appeal pipeline with real DB persistence.
 - 🔐 **JWT RBAC & Dual-Mode Persistence:** Secure Supabase PostgreSQL persistence with zero-downtime offline fallback.
 
 ---
@@ -23,13 +25,14 @@ graph TD
     
     subgraph Security Layer
         API --> Auth["JWT HS256 & BCrypt (app/core/security.py)"]
+        API --> Validation["Pydantic Literal Validation (app/schemas.py)"]
     end
 
     subgraph ML Pipeline
         API --> FeatureEng["Feature Engineering & Priors (app/model/predict.py)"]
-        FeatureEng --> XGBoost["XGBoost Classifier (87.85% Accuracy)"]
+        FeatureEng --> XGBoost["XGBoost Classifier (87.96% Accuracy)"]
         FeatureEng --> SHAP["SHAP TreeExplainer"]
-        XGBoost --> CARCEngine["CARC Code & Remediation Engine"]
+        XGBoost --> CARCEngine["SHAP-Driven CARC & Remediation Engine"]
         SHAP --> CARCEngine
     end
 
@@ -57,6 +60,7 @@ graph TD
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
+python -u test_fixes_verification.py
 python -u test_backend.py
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -88,3 +92,4 @@ pnpm dev
 - **Recall-Optimized Regime ($T = 0.25$):** Recall: **`84.84%`** | Precision: **`41.10%`**
 - **CARC Multi-Class Accuracy:** **`88.0%`** across 8 reason categories
 - **Inference Latency:** `27.3ms – 72.7ms` (SLA: `< 110ms`)
+
