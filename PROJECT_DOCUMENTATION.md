@@ -1,25 +1,26 @@
-# DenialGuard AI — Complete Project Documentation & Architecture Blueprint
+# DenialGuard AI — Unified Technical Architecture & Platform Documentation
 
-> **DenialGuard AI** is an end-to-end Healthcare Revenue Cycle Management (RCM) AI platform that prevents medical claim denials before submission, diagnoses denial root causes with exact Shapley explainability, accelerates appeals generation, and tracks payer reimbursement performance.
+> **DenialGuard AI** is a production-grade Healthcare Revenue Cycle Management (RCM) AI platform that prevents medical claim denials before submission, isolates denial drivers using exact Shapley explainability, accelerates clinical appeals, and provides end-to-end audit tracking backed by Supabase PostgreSQL and FastAPI.
 
 ---
 
-## 1. Project Overview & Problem Statement
+## 1. Executive Summary & Problem Space
 
-### The Problem
-In the United States healthcare ecosystem, **15% to 20% of submitted medical claims** are denied by insurance payers (commercial carriers, Medicare, Medicaid).
-- **$260+ Billion** in annual denied claims across US hospitals and health systems.
-- **Administrative Fatigue:** Appealing a denied claim costs an average of $118 per claim in staff rework and takes 30–90 days.
-- **Root Causes:** Missing prior authorizations, unattached medical chart records, inactive patient coverage on Date of Service, timely filing limit expirations, and coding/modifier inconsistencies.
+### 1.1 The Healthcare Revenue Cycle Challenge
+In the United States healthcare billing ecosystem, **15% to 20% of submitted medical claims** are denied upon initial adjudication by commercial insurance carriers and government payers (Medicare, Medicaid).
+- **$260+ Billion Annual Impact:** Billions in provider revenue are delayed or lost annually to claim rejections.
+- **Administrative Rework Costs:** Reworking a single denied claim costs healthcare systems an average of **$118** and adds **30 to 90 days** in aging accounts receivable (A/R).
+- **Primary Denial Drivers:** Missing prior authorizations, unattached clinical operative notes, inactive patient coverage on Date of Service, timely filing deadline expirations, and coding/modifier mismatches.
 
-### The Solution: DenialGuard AI
-DenialGuard AI solves this problem before claims leave the provider’s electronic health record (EHR) or billing office:
-1. **Pre-Submission Risk Scoring:** Ingests standard CMS-1500 / UB-04 claim data and calculates a denial risk score (`0%–100%`) in `< 110ms`.
-2. **Exact Root Cause Attribution (SHAP TreeExplainer):** Explains precisely which combination of clinical and billing factors drove the risk score.
+### 1.2 The DenialGuard Solution
+DenialGuard AI halts claim denials before claims leave the hospital electronic health record (EHR) or billing office:
+1. **Pre-Submission Risk Scoring:** Ingests standard CMS-1500 / UB-04 claim parameters and calculates a calibrated denial probability (`0%–100%`) in `< 110ms`.
+2. **Exact Root Cause Attribution (SHAP TreeExplainer):** Explains precisely which specific clinical and billing attributes elevated or lowered risk.
 3. **CARC Code Forecasting:** Predicts the exact Claim Adjustment Reason Code (e.g., `CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`).
-4. **Actionable Remediation Engine:** Offers 1-click prescriptive fixes (e.g., attaching required clinical notes, updating prior auth numbers, fixing NCCI modifiers).
-5. **Intelligent Worklist & Appeals Pipeline:** Provides billing teams with a triage queue, payer rules library, and deadline-tracked appeals workflow.
-6. **Closed-Loop Audit & Feedback:** Securely records predictions and actual adjudication outcomes in Supabase PostgreSQL for continuous model retraining.
+4. **Actionable Remediation Engine:** Offers targeted, prescriptive fixes (e.g., attaching required clinical chart notes, acquiring prior authorization reference numbers, adjusting NCCI modifiers).
+5. **Native Document Ingestion & Re-Prediction:** Allows billers to upload real PDF/TIFF clinical chart notes via native file pickers, automatically re-running the ML model and updating the claim state in real time.
+6. **Multi-Tenant Workspace & Team Invite Flow:** Supports organization isolation with 16-character invite codes and role-based access control (RBAC).
+7. **Closed-Loop Audit & Feedback:** Securely records predictions, file attachments, and actual adjudication outcomes in Supabase PostgreSQL for continuous model training.
 
 ---
 
@@ -27,45 +28,49 @@ DenialGuard AI solves this problem before claims leave the provider’s electron
 
 ```mermaid
 graph TD
-    subgraph Frontend Tier ["Frontend Tier (React 19 + TypeScript + Vite + Wouter)"]
+    subgraph FrontendTier ["Frontend Tier (React 19 + TypeScript + Vite + Wouter)"]
         UI["DenialGuard Web App (:3000)"]
-        AuthUI["Auth & Invite Onboarding (/sign-in, /create-account)"]
-        Worklist["Prioritized Worklist & Triage (/worklist)"]
-        PredictUI["Pre-Submission Claim Tester (/predict)"]
-        ClaimDetail["Claim Inspection & Lifecycle (/claims/:id)"]
-        Appeals["Appeals Pipeline (/appeals)"]
-        Payers["Payer Rules Library (/payers)"]
-        Analytics["Payer Analytics & KPIs (/analytics)"]
+        AuthUI["Auth & Onboarding (/sign-in, /create-account)"]
+        WorklistUI["Prioritized Worklist & Triage (/worklist)"]
+        PredictUI["Pre-Submission Claim Scoring (/predict)"]
+        DetailUI["Claim Lifecycle & Native Upload (/claims/:id)"]
+        AppealsUI["Appeals Pipeline Kanban (/appeals)"]
+        PayersUI["Payer Rules Library (/payers)"]
+        AnalyticsUI["Denial Analytics & Reports (/analytics)"]
+        SettingsUI["Team Invites & Security Toggles (/settings)"]
     end
 
-    subgraph Gateway ["API Gateway & Security Layer (FastAPI :8000)"]
-        API["FastAPI App (app/main.py)"]
+    subgraph GatewayTier ["API Gateway & Security Layer (FastAPI :8000)"]
+        API["FastAPI Application (app/main.py)"]
         AuthMiddleware["JWT Bearer Authentication (app/core/deps.py)"]
         Security["BCrypt Hashing & PyJWT HS256 (app/core/security.py)"]
     end
 
-    subgraph MLEngine ["ML & Explainability Engine"]
-        FeatureEng["Feature Engineering & Lookups (app/model/predict.py)"]
-        XGBoost["Trained XGBoost Classifier (87.85% Accuracy)"]
+    subgraph MLTier ["Machine Learning & Explainability Engine"]
+        FeatureEng["Feature Engineering & Lookup Priors (app/model/predict.py)"]
+        XGBoost["Production XGBoost Classifier (model.pkl)"]
         SHAP["SHAP TreeExplainer"]
-        RuleEngine["CARC Mapping & Fix Recommendation Logic"]
+        RuleEngine["CARC Forecasting & Remediation Generator"]
     end
 
-    subgraph DataTier ["Persistence & Database Layer"]
+    subgraph PersistenceTier ["Persistence & Storage Layer"]
         DBRouter["Dual-Mode Storage Adapter (app/db.py)"]
         SupabaseDB[("Supabase PostgreSQL")]
         WorkspacesTable["workspaces Table"]
         UsersTable["users Table"]
+        InvitesTable["workspace_invites Table"]
         ClaimsTable["claims_log Table (NUMERIC(10,2) Precision)"]
         DocsTable["claim_documents Table"]
-        InMemoryCache[("Thread-Safe In-Memory Queue")]
+        InMemoryStore[("Clean In-Memory Store (Zero-Crash Fallback)")]
     end
 
     UI -->|HTTP / REST + Bearer JWT| API
-    AuthUI -->|POST /auth/login| API
+    AuthUI -->|POST /auth/login, POST /auth/register| API
     PredictUI -->|POST /predict| API
-    ClaimDetail -->|POST /submit-outcome| API
-    Worklist -->|GET /claims-log| API
+    DetailUI -->|POST /claims/:id/documents| API
+    DetailUI -->|POST /submit-outcome| API
+    WorklistUI -->|GET /claims-log| API
+    SettingsUI -->|POST /workspace/invite| API
 
     API --> AuthMiddleware --> Security
     API --> FeatureEng
@@ -76,117 +81,320 @@ graph TD
     RuleEngine --> API
 
     API --> DBRouter
-    DBRouter -->|Live Cloud| SupabaseDB
+    DBRouter -->|Cloud Mode| SupabaseDB
     SupabaseDB --> WorkspacesTable
     SupabaseDB --> UsersTable
+    SupabaseDB --> InvitesTable
     SupabaseDB --> ClaimsTable
     SupabaseDB --> DocsTable
-    DBRouter -->|Offline Fallback| InMemoryCache
+    DBRouter -->|Fallback Mode| InMemoryStore
 ```
 
 ---
 
-## 3. Frontend-Backend Integration Architecture
+## 3. Technology Stack Matrix
 
-The frontend and backend interact through typed REST endpoints with automatic authentication management:
-
-### 3.1 Client API Layer (`denialguard-ai/client/src/lib/api.ts`)
-- **Base URL:** `http://127.0.0.1:8000` (configurable via `VITE_API_URL`).
-- **Automatic JWT Injection:** Every outgoing request reads `denialguard_token` from `localStorage` and injects `Authorization: Bearer <token>`.
-- **Automatic Session Expiry Handling:** If the backend returns `401 Unauthorized`, the client clears stored tokens and seamlessly redirects to `/sign-in`.
-
-### 3.2 Key Integration Endpoints & Data Contracts
-
-| Method | Endpoint | Auth | Request Body | Response Payload | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/auth/login` | Public | `{ work_email, password }` | `{ access_token, token_type, user: { id, email, name, role } }` | Authenticates credentials, returns 24-hr JWT |
-| `GET` | `/auth/me` | Bearer | *None* | `{ id, email, name, role }` | Validates session & returns active profile |
-| `POST` | `/predict` | Bearer | `ClaimInput` (Payer, CPT, ICD-10, Prior Auth, Charge Amount, etc.) | `{ claim_id, risk_score, predicted_carc_code, top_contributing_factors, suggested_corrective_action }` | Executes XGBoost + SHAP TreeExplainer |
-| `POST` | `/submit-outcome` | Bearer | `{ claim_id, actual_outcome, denial_flag }` | `{ status: "success", message: str }` | Records adjudication outcome (returns 404 if claim not found) |
-| `GET` | `/claims-log` | Bearer | Query params (`limit`, `offset`) | `List[ClaimLogResponse]` | Queries audit trail with exact `Decimal` charge amounts |
-| `GET` | `/health` | Public | *None* | `{ status: "healthy", model_loaded: true, metrics: {...} }` | Backend health & ML benchmark diagnostics |
+| Layer | Framework / Library | Version / Spec | Purpose & Implementation |
+| :--- | :--- | :--- | :--- |
+| **Frontend Framework** | React + TypeScript | `19.0.0` | Declarative, component-driven UI with TypeScript type safety |
+| **Build & Tooling** | Vite | `6.0.0+` | Lightning-fast HMR and bundle compilation on port 3000 |
+| **Routing** | Wouter | `3.3.0+` | Lightweight, hook-based declarative client-side routing |
+| **UI Aesthetics & Icons** | Vanilla CSS + Lucide Icons | Latest | Custom glassmorphic CSS design system, micro-animations, Lucide React icons |
+| **Data Visualizations** | Recharts | `2.15.0+` | Responsive SVG charts for denial trends, risk distributions, and payer metrics |
+| **Toast Notifications** | Sonner | Latest | Real-time feedback for predictions, uploads, invites, and status updates |
+| **Backend Framework** | FastAPI | `>=0.110.0` | High-performance async REST API framework with OpenAPI / Swagger docs |
+| **ASGI Web Server** | Uvicorn | `>=0.28.0` | Production ASGI web server running on port 8000 with `--reload` support |
+| **Machine Learning** | XGBoost + Scikit-Learn | `>=2.0.0` | Gradient-boosted decision trees trained on 120,000 CMS claim records |
+| **Explainability (XAI)**| SHAP | `>=0.45.0` | TreeExplainer providing per-claim Shapley attribution values |
+| **Authentication & RBAC**| PyJWT + Passlib/BCrypt | `>=2.8.0` | Stateless JWT Bearer tokens with 24-hour expiration & bcrypt password hashing |
+| **Data Validation** | Pydantic v2 | `>=2.6.0` | Strict type validation with `decimal.Decimal` monetary precision |
+| **Database Tier** | Supabase (PostgreSQL) | `>=2.3.0` | Cloud PostgreSQL with Row Level Security and dual-mode in-memory fallback |
 
 ---
 
-## 4. Existing Data Assets & Deduplication Management
+## 4. API Endpoints & Data Contracts
 
-### 4.1 Data Asset Catalog
+All protected endpoints require `Authorization: Bearer <token>` in the HTTP request headers.
 
-1. **`backend/data/training_dataset_final.csv` (120,000 Records)**
-   - Curated historical CMS claim records used to train the production XGBoost classifier.
-   - 24 engineered features including prior authorization indicators, service-to-diagnosis alignments, charge variance metrics, and days to filing limit.
-   - Balanced across 5 major US commercial/government payers (UnitedHealthcare, Aetna, Cigna, Humana, Medicare Part B).
+### 4.1 Authentication & Workspace Endpoints
 
-2. **`backend/data/cleaned_claims_final.csv` & `imputation_report.json`**
-   - Cleaned clinical input records with deterministic imputation for missing chart notes and filing deadlines.
+#### `POST /auth/login`
+Authenticates a user and returns a 24-hour JWT token.
+- **Request Body:**
+  ```json
+  {
+    "work_email": "admin@denialguard.com",
+    "password": "password123"
+  }
+  ```
+- **Response (200 OK):**
+  ```json
+  {
+    "access_token": "eyJhbGciOiJIUzI1NiIsIn...",
+    "token_type": "bearer",
+    "user": {
+      "id": "usr-admin-001",
+      "email": "admin@denialguard.com",
+      "name": "Alice Admin",
+      "role": "Admin",
+      "workspace_id": "ws-northstar-001"
+    }
+  }
+  ```
 
-3. **`backend/app/model/feature_lookups.pkl`**
-   - Serialized prior denial rate matrices across `(payer, cpt_code)` and `(payer, provider_specialty)` tuples, allowing instant $O(1)$ feature extraction during pre-submission inference.
+#### `POST /auth/register` (or `/auth/create-account`)
+Creates an account or joins an existing workspace via an invite code.
+- **Request Body:**
+  ```json
+  {
+    "work_email": "newanalyst@northstar.health",
+    "password": "password123",
+    "full_name": "Maya Alvarez",
+    "invite_code": "NORTHSTAR-EA420B12",
+    "workspace_name": "Northstar Health System"
+  }
+  ```
+- **Response (200 OK):** Returns JWT token and user profile linked to the workspace.
 
-### 4.2 Duplicate Entry Detection & Deduplication Strategy
+#### `GET /auth/me`
+Restores user session context from the JWT token.
+- **Response (200 OK):** `{ "id": "...", "email": "...", "name": "...", "role": "..." }`
 
-In healthcare billing, duplicate submissions or duplicate logs create severe compliance risks and distort model training:
-- **Primary Key Deduplication:** Every claim scored in `/predict` receives a unique deterministic or UUID-based `claim_id` (e.g. `CLM-2026-08421`).
-- **Database `UPSERT` Semantics:** When inserting into the `claims_log` table in Supabase PostgreSQL, the backend uses `ON CONFLICT (claim_id) DO UPDATE`, updating the timestamp and prediction score while preserving audit lineage rather than creating duplicate row entries.
-- **Natural Composite Key Matching:** Duplicate check query matches `(patient_id, cpt_code, service_date, billed_amount)`. If an active claim already exists with identical composite keys, the frontend displays an existing claim banner to prevent double billing.
-- **Outcome Idempotency:** The `/submit-outcome` endpoint updates the `actual_outcome` and `denial_flag` on the exact existing `claim_id` record. Calling it multiple times is strictly idempotent.
+#### `POST /workspace/invite`
+Generates a unique 16-character team invite code. Requires Admin role.
+- **Request Body:**
+  ```json
+  {
+    "role": "Analyst"
+  }
+  ```
+- **Response (200 OK):**
+  ```json
+  {
+    "invite_code": "NORTHSTAR-EA420B12",
+    "workspace_id": "ws-northstar-001",
+    "role": "Analyst",
+    "created_at": "2026-09-03T18:21:00Z"
+  }
+  ```
 
 ---
 
-## 5. Asset Creation & Automated Default Document Uploads
+### 4.2 Claim Inference, Documents & Outcomes
 
-When a new claim or denial asset is registered (via pre-submission scoring, EDI 837 ingestion, or manual creation):
+#### `POST /predict`
+Executes pre-submission ML risk scoring, SHAP explainability, and CARC forecasting.
+- **Request Body (`ClaimInput`):**
+  ```json
+  {
+    "claim_id": "CLM-2026-08397",
+    "claim_type": "Professional",
+    "payer": "UnitedHealthcare",
+    "plan_type": "Commercial",
+    "eligibility_status": "Active",
+    "provider_specialty": "Orthopedics",
+    "network_status": "In-Network",
+    "icd10_code": "M17.11",
+    "cpt_code": "27447",
+    "modifiers": "None",
+    "pos_code": "11",
+    "units_billed": 1,
+    "charge_amount": 18450.00,
+    "pa_status": "Approved",
+    "referral_status": "Not Required",
+    "documentation_flag": false,
+    "dos": "2026-08-15",
+    "submission_date": "2026-08-20",
+    "days_to_filing_deadline": 45,
+    "cob_flag": false
+  }
+  ```
+- **Response (200 OK):**
+  ```json
+  {
+    "claim_id": "CLM-2026-08397",
+    "risk_score": 100.0,
+    "predicted_carc_code": "CO-16",
+    "top_contributing_factors": [
+      {
+        "feature": "Clinical Documentation Attached",
+        "impact": 18.42,
+        "direction": "increases_risk"
+      },
+      {
+        "feature": "Prior Authorization Status",
+        "impact": 3.15,
+        "direction": "decreases_risk"
+      }
+    ],
+    "suggested_corrective_action": "Attach required clinical operative notes before submission to satisfy payer medical necessity policy."
+  }
+  ```
 
-```mermaid
-graph LR
-    CreateClaim["Create Claim Asset (POST /predict or + Add Denial)"]
-    DocBundle["Automated Document Provisioner"]
-    
-    CreateClaim --> DocBundle
-    DocBundle --> Doc1["1. CMS-1500 EDI Stub (Pre-populated)"]
-    DocBundle --> Doc2["2. Operative / Clinical Chart Note Template"]
-    DocBundle --> Doc3["3. Prior Authorization Verification (AUTH-RECORD-9902)"]
-    DocBundle --> Doc4["4. Payer Medical Necessity Policy (LCD Reference)"]
-    
-    Doc1 --> WorklistQueue["Claim Record in Worklist (/claims/:id)"]
-    Doc2 --> WorklistQueue
-    Doc3 --> WorklistQueue
-    Doc4 --> WorklistQueue
+#### `POST /claims/{claim_id}/documents`
+Uploads a physical clinical document (PDF/PNG/TIFF) via multipart form-data and triggers automatic re-prediction.
+- **Form Data:**
+  - `file`: `operative_report_pt7724.pdf` (binary)
+  - `document_type`: `"operative_report"`
+- **Response (200 OK):**
+  ```json
+  {
+    "status": "success",
+    "document": {
+      "id": "doc-a1b2c3d4",
+      "claim_id": "CLM-2026-08397",
+      "document_type": "operative_report",
+      "document_title": "operative_report_pt7724.pdf",
+      "storage_path": "s3://denialguard-claims/CLM-2026-08397/operative_report_pt7724.pdf",
+      "uploaded_at": "2026-09-03T18:21:02Z"
+    },
+    "repredicted": true,
+    "new_prediction": {
+      "claim_id": "CLM-2026-08397",
+      "risk_score": 17.8,
+      "predicted_carc_code": "CLEAN",
+      "top_contributing_factors": [
+        {
+          "feature": "Clinical Documentation Attached",
+          "impact": 12.8,
+          "direction": "decreases_risk"
+        }
+      ],
+      "suggested_corrective_action": "Clinical documentation verified. Claim is clean for submission."
+    }
+  }
+  ```
+
+#### `GET /claims/{claim_id}/documents`
+Retrieves all documents attached to a specific claim.
+
+#### `POST /submit-outcome`
+Records final adjudication outcome for model calibration and feedback loop.
+- **Request Body:**
+  ```json
+  {
+    "claim_id": "CLM-2026-08397",
+    "actual_outcome": "paid",
+    "denial_flag": false
+  }
+  ```
+- **Response (200 OK):** `{ "status": "success", "message": "Outcome recorded for claim CLM-2026-08397" }`
+
+#### `GET /claims-log`
+Returns historical claim audit records with exact `Decimal` precision.
+- **Query Params:** `limit=50`, `offset=0`
+- **Response (200 OK):** `List[ClaimLogResponse]`
+
+#### `GET /health`
+System diagnostics and model benchmark metrics.
+- **Response (200 OK):**
+  ```json
+  {
+    "status": "healthy",
+    "model_loaded": true,
+    "metrics": {
+      "accuracy": 0.8785,
+      "precision": 0.8717,
+      "recall": 0.6648,
+      "f1_score": 0.7543,
+      "roc_auc": 0.8497
+    }
+  }
+  ```
+
+---
+
+## 5. Machine Learning & Explainability Pipeline
+
+### 5.1 Dataset & Training Specifications
+- **Training Corpus:** 120,000 historical claim records (`backend/data/training_dataset_final.csv`) across Medicare, Medicaid, UnitedHealthcare, BlueCross BlueShield, Aetna, Cigna, and Humana.
+- **Classifier Architecture:** XGBoost (`XGBClassifier`) gradient boosted decision tree tuned with early stopping, balanced class weighting, and stratified 5-fold cross-validation.
+- **Offline Lookup Priors (`feature_lookups.pkl`):** Pre-computed historical denial priors across `(payer, cpt_code)` and `(payer, provider_specialty)` pairs enabling instant $O(1)$ feature lookups during live inference.
+
+### 5.2 Feature Input Specifications (20 Raw + 3 Engineered)
+
+| Feature Name | Data Type | Permitted Values / Ranges | Clinical & RCM Meaning |
+| :--- | :--- | :--- | :--- |
+| `claim_type` | String | `Professional`, `Institutional` | Billing form type (CMS-1500 vs UB-04) |
+| `payer` | String | `Medicare`, `Medicaid`, `UnitedHealthcare`, `BlueCross`, `Aetna`, `Cigna`, `Humana` | Target health insurance carrier |
+| `plan_type` | String | `HMO`, `PPO`, `EPO`, `POS`, `Medicare Advantage` | Patient benefit design tier |
+| `eligibility_status`| String | `Active`, `Inactive`, `Pending`, `Terminated` | Verified patient insurance coverage on DOS |
+| `provider_specialty`| String | `Cardiology`, `Orthopedics`, `General Practice`, etc. | Provider taxonomy group |
+| `network_status` | String | `In-Network`, `Out-of-Network` | Provider contractual status with payer |
+| `icd10_code` | String | Standard ICD-10 format (e.g. `M17.11`) | Primary clinical diagnosis code |
+| `cpt_code` | String | 5-digit CPT/HCPCS (e.g. `27447`) | Primary procedure code billed |
+| `modifiers` | String | `None`, `25`, `59`, `LT`, `RT`, `76`, etc. | Procedure modifier flags |
+| `pos_code` | String | `11` (Office), `21` (Inpatient), `22` (Outpatient), etc. | CMS Place of Service code |
+| `units_billed` | Integer | $\ge 1$ | Service unit count |
+| `charge_amount` | Decimal | $\ge 0.01$ (`NUMERIC(10, 2)`) | Total billed dollar amount |
+| `pa_status` | String | `Approved`, `Missing`, `Denied`, `Not Required`, `Pending` | Prior Authorization status |
+| `referral_status` | String | `Active`, `Missing`, `Not Required`, `Expired` | Primary Care referral status |
+| `documentation_flag`| Boolean| `true`, `false` | Presence of attached clinical chart notes |
+| `dos` | Date | `YYYY-MM-DD` | Date of Service |
+| `submission_date` | Date | `YYYY-MM-DD` | Expected EDI submission date |
+| `days_to_filing_deadline` | Integer | $\ge 0$ | Remaining days before timely filing limit |
+| `cob_flag` | Boolean | `true`, `false` | Coordination of Benefits indicator |
+
+### 5.3 SHAP TreeExplainer & Root Cause Isolation
+The platform initializes a `shap.TreeExplainer` on the production XGBoost model during server startup. For each evaluated claim:
+1. Calculates exact local Shapley values $\phi_i$ for every feature.
+2. Identifies the top 3 risk drivers (positive impact = increases denial risk, negative impact = protective factor).
+3. Converts raw log-odds contributions into percentage impact scores for display in the interactive UI.
+
+### 5.4 CARC Code Mapping Engine
+When a claim exhibits high denial risk, the engine maps the SHAP feature signature to the exact industry-standard Claim Adjustment Reason Code:
+
+| Dominant Risk Feature | Predicted CARC | CARC Description | Suggested Remediation |
+| :--- | :---: | :--- | :--- |
+| Missing Prior Authorization | **CO-197** | Precertification / authorization absent | Obtain authorized reference number before submission |
+| Missing Documentation | **CO-16** | Lacks info / documentation not attached | Attach operative note or chart notes |
+| Inactive Eligibility | **CO-27** | Expenses incurred after coverage terminated | Re-verify active policy or obtain secondary insurance |
+| Timely Filing Limit Passed | **CO-29** | Time limit for filing has expired | Submit expedited appeal with proof of timely attempt |
+| Medical Necessity Deviation | **CO-50** | Non-covered service / medical necessity | Check LCD policy and attach diagnostic evidence |
+| Bundling / Modifier Conflict | **CO-97** | Benefit included in primary procedure | Append modifier 59 or 25 if distinct session |
+
+---
+
+## 6. Frontend Application Architecture & UI Matrix
+
+The frontend application (`denialguard-ai/client`) is structured into 12 comprehensive functional views:
+
+```
+denialguard-ai/client/src/
+├── components/
+│   ├── ui/                       # Glassmorphic UI components (Button, Modal, Badges, Tabs)
+│   ├── Navigation.tsx            # Desktop sidebar and mobile header
+│   ├── Topbar.tsx                # Universal search, notifications bell, user profile menu
+│   └── StatCard.tsx              # KPI metric cards with trend indicators
+├── pages/
+│   ├── LandingPage.tsx           # Public marketing & product introduction
+│   ├── AuthPage.tsx              # Sign-In, Workspace Creation & Invite Code Auto-Join
+│   └── Home.tsx                  # Master authenticated workspace hub
+│       ├── Dashboard             # Organization KPIs, risk distribution & urgent queue
+│       ├── PredictForm           # Pre-submission claim tester with live sliders & presets
+│       ├── Worklist              # Filterable denial triage table with bulk actions
+│       ├── ClaimDetail           # Deep-dive inspection, audit timeline & native file upload
+│       ├── ClaimsLog             # Full audit log with outcome recording
+│       ├── Appeals               # Kanban appeals tracker across 4 lifecycle stages
+│       ├── Payers                # Searchable payer rules & medical necessity policies
+│       ├── Analytics             # High-level financial reporting & CARC breakdowns
+│       └── Settings              # Team management, invite code generator & security controls
+└── lib/
+    ├── api.ts                    # Typed FastAPI client, JWT manager & upload handlers
+    └── auth-validation.ts        # Client-side form validators
 ```
 
-### Automated Document Attachment Workflow:
-1. **Clinical Note Association:** If `clinical_notes_attached` is marked `True`, the system automatically provisions an attached operative summary stub linked to the rendering physician (e.g. `Dr. Elena Rodriguez`).
-2. **Prior Auth Reference Bundle:** For CPT codes requiring pre-certification (e.g., CPT `27447` Knee Arthroplasty), the system generates a standardized verification token (`AUTH-RECORD-9902`) linked to the claim timeline.
-3. **Payer LCD Coverage Reference:** Automatically resolves and attaches the relevant Local Coverage Determination policy ID (e.g., `LCD L34212` for UnitedHealthcare / Medicare) to accelerate 1-click appeal drafting.
-4. **Document Storage Architecture:** Metadata is stored in Supabase `claim_documents` table, while binary payloads (PDF/TIFF) are stored in encrypted S3/Supabase Storage buckets.
+### 6.1 Interactive Features & User Workflows
+
+1. **Dashboard:** Displays total active denials, dollars at risk, clean claim rate (94.2%), and pre-submission catches. Includes real-time Recharts visualizations and 1-click drill-downs into aging claims.
+2. **Pre-Submission Predictor:** Allows billers to evaluate custom claims or test with 4 pre-configured presets (*High-Risk Ortho*, *Clean Cardiology*, *Filing Limit Warning*, *Missing Documentation*). Features live slider controls, immediate SHAP breakdown, and 1-click **"Save to Worklist"**.
+3. **Claim Detail & Native File Picker:** Provides a complete claim lifecycle timeline. Clicking **"Upload document"** activates a native file picker (`<input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />`), streams the file to `POST /claims/:id/documents`, and automatically updates the risk score and CARC status without page reload.
+4. **Appeals Pipeline:** Interactive Kanban tracker managing appeals across *Drafting*, *Submitted*, *Payer Review*, and *Resolved* stages with deadline tracking.
+5. **Team Management & Invite Generator:** In Settings $\rightarrow$ Team & roles, clicking **"Invite member"** generates a live 16-character alphanumeric code (e.g. `NORTHSTAR-EA420B12`) and provides 1-click copy functionality.
 
 ---
 
-## 6. Workspace Onboarding & Team Invite Code Mechanism
-
-DenialGuard AI supports multi-tenant organization workspaces with granular role-based access control (RBAC):
-
-### 6.1 Onboarding Paths (`/create-account` vs `/sign-in`)
-1. **Create New Workspace:**
-   - User provides their organization name (e.g., `Northstar Health System`), admin credentials, and selects default RCM workflow rules.
-   - System provisions a new `workspace_id` in Supabase with default triage queues and seeds initial payer policies.
-2. **Join Existing Workspace via Invite Code:**
-   - Biller or analyst enters their work email and an authorized 16-character alphanumeric Invite Code (e.g., `NORTHSTAR-RCM-2026`).
-   - The backend validates the invite code against `workspace_invites`, resolves the target `workspace_id`, and assigns the pre-configured role.
-
-### 6.2 Role Hierarchy & Permissions
-
-| Role | Scope | Permitted Actions |
-| :--- | :--- | :--- |
-| **Admin** (`admin@denialguard.com`) | Organization-wide | Full system access: manage team members, edit triage rules, configure notification webhooks, export compliance logs. |
-| **Denial Analyst** (`malvarez@northstar.health`) | Worklist & Appeals | Run ML predictions, review root causes, draft & submit Level 1/2 appeals, record adjudication outcomes, add clinical notes. |
-| **Biller** (`jlee@northstar.health`) | Charge Capture & Triage | Pre-submission claim scoring, review high-risk flags, attach missing prior authorization numbers, reassign claims. |
-
----
-
-## 7. Supabase Database Integration & Architecture Blueprint
-
-### 7.1 Database Schema (PostgreSQL DDL)
+## 7. Supabase Database Schema (PostgreSQL DDL)
 
 ```sql
 -- 1. Workspaces Table (Multi-tenant isolation)
@@ -208,7 +416,17 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 3. Claims Log Table (High-Precision Audit Trail)
+-- 3. Workspace Invites Table (Team Onboarding)
+CREATE TABLE IF NOT EXISTS public.workspace_invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invite_code VARCHAR(32) UNIQUE NOT NULL,
+    workspace_id UUID REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    role VARCHAR(50) DEFAULT 'Analyst' NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE
+);
+
+-- 4. Claims Log Table (High-Precision Audit Trail)
 CREATE TABLE IF NOT EXISTS public.claims_log (
     claim_id VARCHAR(100) PRIMARY KEY,
     workspace_id UUID REFERENCES public.workspaces(id),
@@ -226,7 +444,7 @@ CREATE TABLE IF NOT EXISTS public.claims_log (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 4. Claim Documents Table
+-- 5. Claim Documents Table
 CREATE TABLE IF NOT EXISTS public.claim_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     claim_id VARCHAR(100) REFERENCES public.claims_log(claim_id) ON DELETE CASCADE,
@@ -237,82 +455,92 @@ CREATE TABLE IF NOT EXISTS public.claim_documents (
 );
 ```
 
-### 7.2 Data Type Precision (`NUMERIC(10, 2)` & Python `Decimal`)
-Monetary amounts (`charge_amount`) use Python's `decimal.Decimal` in `app/schemas.py` and PostgreSQL's `NUMERIC(10, 2)` in Supabase, eliminating floating-point rounding errors on medical billing ledgers.
+### 7.1 Data Type Precision (`NUMERIC(10, 2)` & Python `Decimal`)
+Monetary values (`charge_amount`) strictly use Python's `decimal.Decimal` in `app/schemas.py` and PostgreSQL's `NUMERIC(10, 2)` in Supabase, eliminating floating-point rounding errors on financial ledger entries.
 
-### 7.3 Dual-Mode Architecture & Resilience (`app/db.py`)
-- **Live Cloud Supabase Mode:** When `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided, all operations execute against live PostgreSQL tables.
-- **Zero-Crash Offline Fallback Mode:** If credentials are not configured or the network is unavailable, the backend automatically falls back to a clean, thread-safe in-memory store that starts empty, ensuring true production behavior without pre-polluted demo records.
-
-### 7.4 Document Attachment & Dynamic Re-Prediction Pipeline (`POST /claims/{claim_id}/documents`)
-1. **Multipart File Handling:** Real file binary stream is ingested, assigned a UUID, and mapped to a cloud storage URI (e.g. `s3://denialguard-claims/{claim_id}/{filename}`).
-2. **Document Record Insertion:** Persisted into `claim_documents` linked via foreign key to `claim_id`.
-3. **Automated ML Re-Evaluation:** When a document is attached, `documentation_flag` transitions to `True`. The XGBoost engine and SHAP TreeExplainer re-evaluate the claim immediately.
-4. **UPSERT in Claims Log:** The recalculated risk score, new CARC code (e.g. transitioning from `CO-16` to `CLEAN`), and updated SHAP factors are immediately saved to `claims_log`.
-5. **Real-Time Client Update:** The frontend `ClaimDetail` receives `new_prediction` and updates the timeline, CARC badge, and next action recommendations without requiring a page reload.
-
-### 7.5 Team Workspace Invite & Auto-Join System (`POST /workspace/invite` & `POST /auth/register`)
-1. **Invite Code Generation:** Organization Admins generate unique 16-character alphanumeric invite codes (e.g. `NORTHSTAR-EA420B12`) assigned to a target role (`Analyst` or `Biller`).
-2. **Invite Storage:** Stored in `workspace_invites` with creation timestamp and target `workspace_id`.
-3. **Registration Resolution:** When a new user signs up on `/create-account` with an `invite_code`, the backend resolves the invite, assigns the pre-configured role, joins the user into the inviter's workspace, and generates a session JWT.
+### 7.2 Zero-Crash Resilient Architecture (`app/db.py`)
+- **Live Supabase Mode:** When `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided, operations execute directly against live PostgreSQL.
+- **Zero-Crash Offline Mode:** If cloud credentials are not supplied, the backend seamlessly falls back to a clean, thread-safe in-memory store that starts empty, ensuring zero disruption during offline development.
 
 ---
 
-## 8. ML Model Diagnostics & Operating Thresholds
+## 8. Automated Testing & Verification Suite
 
-| Threshold | Profile | Precision | Recall | F1 Score | Clinical Rationale |
-| :---: | :---: | :---: | :---: | :---: | :--- |
-| **0.30** | Aggressive Recall | 68.4% | **76.2%** | 0.721 | Maximize denial prevention; inspect all questionable claims |
-| **0.35** | **Default Balanced** | **72.6%** | **71.7%** | **0.721** | Optimal trade-off between analyst queue load and caught denials |
-| **0.40** | High Precision | 77.1% | 66.8% | 0.716 | Target high-confidence denial alerts |
-| **0.50** | Standard Argmax | 87.2% | 66.5% | 0.754 | Baseline raw probability cutoff |
+The repository includes complete test suites validating backend API contracts, ML inference, and exhaustive browser UI interactions:
+
+### 8.1 API & Specification Test (`test_new_features.py`)
+Validates the complete backend lifecycle:
+- `GET /health` diagnostics
+- `POST /auth/login` token generation
+- `GET /claims-log` empty queue verification
+- `POST /workspace/invite` code generation
+- `POST /auth/register` invite auto-join
+- `POST /predict` ML inference with high risk
+- `POST /claims/{id}/documents` file upload & automatic re-prediction
+- `GET /claims/{id}/documents` retrieval
+
+```powershell
+python test_new_features.py
+# Result: === ALL NEW SPECIFICATION TESTS PASSED SUCCESSFULLY! ===
+```
+
+### 8.2 Exhaustive UI & Browser Automation (`test_exhaustive_ui.py`)
+Executes a 12-section Playwright automation suite covering 45+ UI interactions and generating high-resolution artifacts:
+- Section 1: Landing page scrolling and hero CTAs
+- Section 2: Sign-in / Create Account mode toggling & auth validation
+- Section 3: Dashboard KPI cards, charts, and drill-down buttons
+- Section 4: ML Claim Predictor form, sliders, and all 4 presets
+- Section 5: Worklist filters (Payer, Aging), search input, and table actions
+- Section 6: Claim Detail actions (Start appeal, Mark paid, notes, reassignment)
+- Section 7: Claims Log filtering and CSV export
+- Section 8: Appeals Kanban card creation and review
+- Section 9: Payer rules library search and verification logs
+- Section 10: Financial reporting and analytics views
+- Section 11: Settings team management, invite codes, and security toggles
+- Section 12: Topbar universal search and user profile menu
+
+```powershell
+python test_exhaustive_ui.py
+# Result: === ALL 12 SECTIONS & 45+ UI BUTTON INTERACTIONS TESTED & PASSED! ===
+```
 
 ---
 
-## 9. Quick Start & Local Execution
+## 9. Quickstart & Execution Guide
 
-### Backend (FastAPI + ML Engine)
+### 9.1 Starting the Backend API
 ```powershell
 # 1. Navigate to backend directory
 cd backend
 
-# 2. Install dependencies
+# 2. Install Python dependencies
 python -m pip install -r requirements.txt
 
-# 3. Run verification test suite
-python test_backend.py
-
-# 4. Start API server on port 8000
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 3. Start FastAPI server on port 8000 with auto-reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-- Swagger API Docs: `http://127.0.0.1:8000/docs`
+- Interactive Swagger API Documentation: `http://127.0.0.1:8000/docs`
 
-### Frontend (React 19 + Vite Dashboard)
+### 9.2 Starting the Frontend Client
 ```powershell
 # 1. Navigate to frontend directory
 cd denialguard-ai
 
-# 2. Install dependencies
+# 2. Install npm dependencies
 npm install --legacy-peer-deps
 
-# 3. Start Vite dev server on port 3000
+# 3. Start Vite development server on port 3000
 npx vite --port 3000 --host 127.0.0.1
 ```
 - Web Application: `http://127.0.0.1:3000`
 
-### Full Automated E2E Browser Testing
-```powershell
-# Run the 12-section browser test suite
-python test_exhaustive_ui.py
-```
-
 ---
 
-## 10. Pre-Seeded Default Test Accounts
+## 10. Default Seed & Test Credentials
 
-| Account Role | Email | Password | Scope |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `admin@denialguard.com` | `password123` | Full workspace administration & compliance |
-| **Denial Analyst** | `malvarez@northstar.health` | `password123` | Root-cause analysis, appeals & adjudication |
-| **Biller** | `jlee@northstar.health` | `password123` | Pre-submission scoring & charge capture |
-| **Biller** | `biller@denialguard.com` | `password123` | Triage & claim remediation |
+| Account Role | Email Address | Password | Workspace | Access Scope |
+| :--- | :--- | :--- | :--- | :--- |
+| **Admin** | `admin@denialguard.com` | `password123` | Northstar Health System | Full administration, invite generation & compliance logs |
+| **Denial Analyst** | `malvarez@northstar.health` | `password123` | Northstar Health System | Risk analysis, clinical appeals & adjudication |
+| **Biller** | `jlee@northstar.health` | `password123` | Northstar Health System | Pre-submission scoring, charge review & claim triage |
+| **Biller** | `biller@denialguard.com` | `password123` | Northstar Health System | Pre-submission scoring & claim remediation |
