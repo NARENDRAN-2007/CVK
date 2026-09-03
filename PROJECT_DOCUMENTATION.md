@@ -182,16 +182,17 @@ All protected endpoints require `Authorization: Bearer <token>` in the HTTP requ
 - `GET/POST /workspace/security`: Fetches and updates HIPAA security parameters (`session_timeout_minutes`, `audit_log_retention_days`).
 
 ### 6.2 ML Prediction & Document Ingestion
-- `POST /predict`: Evaluates 20 raw inputs + 3 engineered features, computes SHAP values, determines CARC code, logs claim to audit trail, and fires high-risk alerts when risk $\ge 60\%$.
+- `POST /predict`: Evaluates 20 raw inputs + 3 engineered features, computes SHAP values, determines CARC code, sanitizes Decimal types for Supabase Postgres storage, logs claim to audit trail (`persisted: boolean`), and fires high-risk alerts when risk $\ge 60\%$.
 - `POST /claims/{claim_id}/documents`: Ingests multipart clinical files (`.pdf`, `.png`, `.jpg`), auto-repredicts risk with documentation attached, and updates claim record.
 - `GET /claims/{claim_id}/documents`: Returns list of attached documents for a claim with workspace-wide visibility.
 
-### 6.3 Appeals Pipeline & Outcome Feedback
+### 6.3 Appeals Pipeline, Real-Time Sync & Outcome Feedback
 - `GET /appeals`: Returns all active appeals across 4 pipeline stages (`drafting`, `submitted`, `payer_review`, `resolved`).
 - `POST /appeals`: Initiates a clinical appeal directly from claim records or Appeals Kanban, persisting record to DB and emitting workspace notification.
 - `PATCH /appeals/{appeal_id}/status`: Advances appeal stage with audit timestamping.
 - `POST /submit-outcome`: Records final clearinghouse adjudication outcome (`paid` vs `denied`).
 - `GET /claims-log`: Retrieves paginated audit log of evaluated claims.
+- **Live Multi-Session Synchronization:** `Home.tsx` synchronizes `appeals`, `denials`, and `notifications` across browser sessions via a 3-second background polling cycle, window focus/visibility triggers, and path-driven route re-evaluation.
 
 ---
 
@@ -200,6 +201,7 @@ All protected endpoints require `Authorization: Bearer <token>` in the HTTP requ
 | Test Suite | Execution Command | Purpose & Coverage |
 | :--- | :--- | :--- |
 | **Comprehensive Fixes Verification** | `python test_fixes_verification.py` | Validates Priorities 1–7: SHAP-driven CARC selection, canonical vocabularies, schema literal rejection (`422`), percentage deviation, and real appeal creation in DB. |
+| **Supabase Persistence & Error Handling** | `python test_supabase_persistence_fix.py` | Validates live Supabase PostgreSQL insertion, Decimal float sanitization, direct DB row verification, and graceful fallback handling (`persisted: false`). |
 | **Backend Integration Suite** | `python test_backend.py` | Tests all FastAPI endpoints, JWT auth rejection, SHAP latency, outcome submission, and claim logs. |
 | **Round 2 Specification Suite** | `python test_round2_spec.py` | Validates invite codes, document upload reprediction, notifications, and settings persistence. |
 | **Frontend Production Build** | `npm run build` (in `denialguard-ai`) | Validates TypeScript typing and builds optimized production bundles. |

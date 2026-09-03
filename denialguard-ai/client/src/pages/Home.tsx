@@ -1117,6 +1117,10 @@ function Appeals({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    onRefresh();
+  }, []);
+
+  useEffect(() => {
     if (selectedClaimId) {
       fetchClaimDocuments(selectedClaimId).then(setClaimDocs);
       setSelectedDocIds([]);
@@ -1933,7 +1937,25 @@ export default function Home() {
 
   useEffect(() => {
     loadData();
-  }, []);
+    const interval = setInterval(() => {
+      loadData();
+    }, 3000);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        loadData();
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [path]);
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
