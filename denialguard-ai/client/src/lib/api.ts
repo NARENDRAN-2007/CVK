@@ -52,6 +52,51 @@ export type UserProfile = {
   email: string;
   name: string;
   role: string;
+  workspace_id?: string;
+};
+
+export type AppealItem = {
+  id: string;
+  claim_id: string;
+  appeal_level: string;
+  status: "drafting" | "submitted" | "payer_review" | "resolved";
+  payer: string;
+  billed_amount: number;
+  deadline: string;
+  attached_document_ids: string[];
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotificationItem = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  message: string;
+  type: "high_risk" | "document" | "invite" | "appeal" | "system";
+  is_read: boolean;
+  created_at: string;
+  link?: string;
+};
+
+export type WorkspaceSettings = {
+  workspace_id: string;
+  auto_assign: boolean;
+  default_appeal_deadline_days: number;
+  high_risk_threshold: number;
+  email_notifications: boolean;
+  deadline_alerts: boolean;
+  weekly_digest: boolean;
+  updated_at: string;
+};
+
+export type SecuritySettings = {
+  workspace_id: string;
+  session_timeout_minutes: number;
+  audit_log_retention_days: number;
+  enforce_ip_allowlist: boolean;
+  updated_at: string;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -62,44 +107,67 @@ function getAuthHeader(): Record<string, string> {
 }
 
 export async function loginUser(workEmail: string, password: string): Promise<{ access_token: string; token_type: string; user: UserProfile }> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ work_email: workEmail, password }),
-    });
-    if (!res.ok) {
-      throw new Error(`Invalid credentials or login failure (${res.status})`);
-    }
-    const data = await res.json();
-    if (typeof window !== "undefined") {
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("user_profile", JSON.stringify(data.user));
-    }
-    return data;
-  } catch (err) {
-    console.warn("Backend auth unavailable, saving local mock session:", err);
-    const mockUser: UserProfile = {
-      email: workEmail,
-      name: workEmail.includes("admin") ? "Alice Admin" : workEmail.includes("jlee") ? "Jordan Lee" : "Maya Alvarez",
-      role: workEmail.includes("admin") ? "Admin" : workEmail.includes("jlee") ? "Biller" : "Analyst",
-    };
-    if (typeof window !== "undefined") {
-      localStorage.setItem("access_token", "mock-demo-token");
-      localStorage.setItem("user_profile", JSON.stringify(mockUser));
-    }
-    return { access_token: "mock-demo-token", token_type: "bearer", user: mockUser };
+  const res = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ work_email: workEmail, password }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Invalid work email or password");
   }
+
+  const data = await res.json();
+  if (typeof window !== "undefined") {
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("user_profile", JSON.stringify(data.user));
+  }
+  return data;
+}
+
+export async function registerUser(payload: {
+  work_email: string;
+  password: string;
+  full_name: string;
+  invite_code?: string;
+  workspace_name?: string;
+}): Promise<{ access_token: string; token_type: string; user: UserProfile }> {
+  const res = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Registration failed (${res.status})`);
+  }
+
+  const data = await res.json();
+  if (typeof window !== "undefined") {
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("user_profile", JSON.stringify(data.user));
+  }
+  return data;
 }
 
 export function getCurrentUser(): UserProfile {
-  if (typeof window === "undefined") return { email: "malvarez@northstar.health", name: "Maya Alvarez", role: "Analyst" };
+  if (typeof window === "undefined") return { email: "admin@denialguard.com", name: "Alice Admin", role: "Admin", workspace_id: "ws-northstar-001" };
   const raw = localStorage.getItem("user_profile");
-  if (!raw) return { email: "malvarez@northstar.health", name: "Maya Alvarez", role: "Analyst" };
+  if (!raw) return { email: "admin@denialguard.com", name: "Alice Admin", role: "Admin", workspace_id: "ws-northstar-001" };
   try {
     return JSON.parse(raw);
   } catch {
-    return { email: "malvarez@northstar.health", name: "Maya Alvarez", role: "Analyst" };
+    return { email: "admin@denialguard.com", name: "Alice Admin", role: "Admin", workspace_id: "ws-northstar-001" };
+  }
+}
+
+export function logoutUser(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("user_profile");
+    window.location.href = "/sign-in";
   }
 }
 
@@ -117,7 +185,7 @@ export async function predictClaim(claim: ClaimInput): Promise<PredictionRespons
     modifiers: claim.modifiers || "",
     pos_code: claim.posCode || "11",
     units_billed: Number(claim.unitsBilled) || 1,
-    charge_amount: Number(claim.chargeAmount) || (claim.cpt === "27447" ? 18450 : 482),
+    charge_amount: Number(claim.chargeAmount) || 18450,
     pa_status: claim.paStatus || "Missing",
     referral_status: claim.referralStatus || "Not Required",
     documentation_flag: typeof claim.documentationFlag === "boolean" ? claim.documentationFlag : claim.documentationFlag !== "false" && claim.documentationFlag !== "0",
@@ -127,60 +195,35 @@ export async function predictClaim(claim: ClaimInput): Promise<PredictionRespons
     cob_flag: Boolean(claim.cobFlag),
   };
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/predict`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getAuthHeader(),
-      },
-      body: JSON.stringify(payload),
-    });
+  const res = await fetch(`${API_BASE_URL}/predict`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify(payload),
+  });
 
-    if (!res.ok) {
-      throw new Error(`Inference returned status ${res.status}`);
-    }
-
-    const data = await res.json();
-    return {
-      claimId: data.claim_id,
-      denialRiskScore: data.risk_score,
-      riskScore: data.risk_score,
-      predictedCarcCode: data.predicted_carc_code,
-      topContributingFactors: (data.top_contributing_factors || []).map((f: any) => ({
-        label: f.feature,
-        impact: f.impact,
-        direction: f.direction === "increases_risk" ? "positive" : "negative",
-      })),
-      suggestedCorrectiveAction: data.suggested_corrective_action,
-      modelVersion: "XGBoost + SHAP TreeExplainer (v1.0.0)",
-      source: "api",
-    };
-  } catch (error) {
-    console.warn("Direct FastAPI /predict unavailable or network error, computing calibrated fallback:", error);
-    const hasAuth = claim.paStatus === "Approved" || claim.paStatus === "Authorization verified";
-    const pendingAuth = claim.paStatus === "Pending" || claim.paStatus === "Authorization pending";
-    const score = hasAuth ? 14 : pendingAuth ? 52 : 77;
-    const carc = hasAuth ? "CLEAN" : pendingAuth ? "CO-197" : "CO-197";
-
-    return {
-      claimId: claim.claimId || `CLM-${Math.floor(100000 + Math.random() * 900000)}`,
-      denialRiskScore: score,
-      riskScore: score,
-      predictedCarcCode: carc,
-      topContributingFactors: [
-        { label: "Prior Authorization Status", impact: hasAuth ? -3.4 : 4.8, direction: hasAuth ? "negative" : "positive" },
-        { label: "Procedure Code Denial Prior", impact: 2.1, direction: "positive" },
-        { label: "Clinical Documentation Attached", impact: -1.2, direction: "negative" },
-        { label: "Days to Filing Deadline", impact: 0.8, direction: "positive" },
-      ],
-      suggestedCorrectiveAction: hasAuth
-        ? "Claim validation passed with low denial risk. Ready for clean EDI submission."
-        : "Precertification / Prior authorization required. Obtain approved reference number before submission.",
-      modelVersion: "XGBoost Fallback (Offline)",
-      source: "demo",
-    };
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Inference error (${res.status})`);
   }
+
+  const data = await res.json();
+  return {
+    claimId: data.claim_id,
+    denialRiskScore: data.risk_score,
+    riskScore: data.risk_score,
+    predictedCarcCode: data.predicted_carc_code,
+    topContributingFactors: (data.top_contributing_factors || []).map((f: any) => ({
+      label: f.feature,
+      impact: f.impact,
+      direction: f.direction === "increases_risk" ? "positive" : "negative",
+    })),
+    suggestedCorrectiveAction: data.suggested_corrective_action,
+    modelVersion: "XGBoost + SHAP TreeExplainer (v1.3.0)",
+    source: "api",
+  };
 }
 
 export async function submitClaimOutcome(claimId: string, outcome: "paid" | "denied"): Promise<boolean> {
@@ -205,61 +248,13 @@ export async function submitClaimOutcome(claimId: string, outcome: "paid" | "den
 
 export async function fetchClaimsLog(): Promise<any[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/claims-log?limit=50`, {
+    const res = await fetch(`${API_BASE_URL}/claims-log?limit=100`, {
       headers: getAuthHeader(),
     });
     if (!res.ok) return [];
     return await res.json();
   } catch {
     return [];
-  }
-}
-
-export async function registerUser(payload: {
-  work_email: string;
-  password: string;
-  full_name: string;
-  invite_code?: string;
-  workspace_name?: string;
-}): Promise<{ access_token: string; token_type: string; user: UserProfile }> {
-  const res = await fetch(`${API_BASE_URL}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Registration failed (${res.status})`);
-  }
-  const data = await res.json();
-  if (typeof window !== "undefined") {
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("user_profile", JSON.stringify(data.user));
-  }
-  return data;
-}
-
-export async function generateWorkspaceInvite(role: string = "Analyst"): Promise<{ invite_code: string; workspace_id: string; role: string }> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/workspace/invite`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getAuthHeader(),
-      },
-      body: JSON.stringify({ role }),
-    });
-    if (!res.ok) {
-      throw new Error(`Invite generation failed with status ${res.status}`);
-    }
-    return await res.json();
-  } catch (err) {
-    console.warn("Using offline invite generator:", err);
-    return {
-      invite_code: `NORTHSTAR-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-      workspace_id: "ws-northstar-001",
-      role,
-    };
   }
 }
 
@@ -272,41 +267,16 @@ export async function uploadClaimDocument(
   formData.append("file", file);
   formData.append("document_type", documentType);
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/claims/${claimId}/documents`, {
-      method: "POST",
-      headers: getAuthHeader(),
-      body: formData,
-    });
-    if (!res.ok) {
-      throw new Error(`Document upload failed with status ${res.status}`);
-    }
-    return await res.json();
-  } catch (err) {
-    console.warn("Direct upload API failed, returning simulated response:", err);
-    return {
-      status: "success",
-      document: {
-        id: `doc-${Date.now()}`,
-        claim_id: claimId,
-        document_type: documentType,
-        document_title: file.name,
-        storage_path: `s3://denialguard-claims/${claimId}/${file.name}`,
-        uploaded_at: new Date().toISOString(),
-      },
-      repredicted: true,
-      new_prediction: {
-        claim_id: claimId,
-        risk_score: 18.5,
-        predicted_carc_code: "CLEAN",
-        top_contributing_factors: [
-          { feature: "Clinical Documentation Attached", impact: 8.92, direction: "decreases_risk" },
-          { feature: "Prior Authorization Status", impact: 0.18, direction: "decreases_risk" }
-        ],
-        suggested_corrective_action: "Clinical documentation successfully attached. Claim is now clean for submission."
-      }
-    };
+  const res = await fetch(`${API_BASE_URL}/claims/${claimId}/documents`, {
+    method: "POST",
+    headers: getAuthHeader(),
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Document upload failed with status ${res.status}`);
   }
+  return await res.json();
 }
 
 export async function fetchClaimDocuments(claimId: string): Promise<any[]> {
@@ -319,6 +289,180 @@ export async function fetchClaimDocuments(claimId: string): Promise<any[]> {
   } catch {
     return [];
   }
+}
+
+export async function fetchAppeals(): Promise<AppealItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/appeals`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function createAppeal(payload: {
+  claim_id: string;
+  appeal_level?: "Level 1" | "Level 2";
+  attached_document_ids?: string[];
+  notes?: string;
+}): Promise<AppealItem> {
+  const res = await fetch(`${API_BASE_URL}/appeals`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({
+      claim_id: payload.claim_id,
+      appeal_level: payload.appeal_level || "Level 1",
+      attached_document_ids: payload.attached_document_ids || [],
+      notes: payload.notes || "",
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Appeal creation failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function updateAppealStatus(
+  appealId: string,
+  status: "drafting" | "submitted" | "payer_review" | "resolved"
+): Promise<AppealItem> {
+  const res = await fetch(`${API_BASE_URL}/appeals/${appealId}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to update appeal status (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function fetchNotifications(): Promise<NotificationItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/notifications`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/notifications/${id}/read`, {
+      method: "POST",
+      headers: getAuthHeader(),
+    });
+  } catch {}
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/notifications/read-all`, {
+      method: "POST",
+      headers: getAuthHeader(),
+    });
+  } catch {}
+}
+
+export async function generateWorkspaceInvite(role: string = "Analyst"): Promise<{ invite_code: string; workspace_id: string; role: string }> {
+  const res = await fetch(`${API_BASE_URL}/workspace/invite`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Invite generation failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function fetchWorkspaceSettings(): Promise<WorkspaceSettings> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/workspace/settings`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error("Failed");
+    return await res.json();
+  } catch {
+    return {
+      workspace_id: "ws-northstar-001",
+      auto_assign: true,
+      default_appeal_deadline_days: 30,
+      high_risk_threshold: 60,
+      email_notifications: true,
+      deadline_alerts: true,
+      weekly_digest: false,
+      updated_at: new Date().toISOString(),
+    };
+  }
+}
+
+export async function saveWorkspaceSettings(settings: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
+  const res = await fetch(`${API_BASE_URL}/workspace/settings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to save workflow settings");
+  }
+  return await res.json();
+}
+
+export async function fetchSecuritySettings(): Promise<SecuritySettings> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/workspace/security`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error("Failed");
+    return await res.json();
+  } catch {
+    return {
+      workspace_id: "ws-northstar-001",
+      session_timeout_minutes: 60,
+      audit_log_retention_days: 2555,
+      enforce_ip_allowlist: false,
+      updated_at: new Date().toISOString(),
+    };
+  }
+}
+
+export async function saveSecuritySettings(settings: Partial<SecuritySettings>): Promise<SecuritySettings> {
+  const res = await fetch(`${API_BASE_URL}/workspace/security`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to save security settings");
+  }
+  return await res.json();
 }
 
 export function getRiskLabel(score: number) {

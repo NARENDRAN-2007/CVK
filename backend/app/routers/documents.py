@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from ..schemas import DocumentUploadResponse, ClaimDocumentItem, PredictionResponse, ClaimInput
-from ..db import insert_claim_document, get_claim_documents, get_claim_by_id, upsert_claim_log
+from ..db import insert_claim_document, get_claim_documents, get_claim_by_id, upsert_claim_log, insert_notification
 from ..model.predict import predict_claim
 from ..core.deps import get_current_user
 
@@ -18,6 +18,7 @@ async def upload_document(
     document_type: str = Form("clinical_chart_note"),
     current_user: dict = Depends(get_current_user)
 ) -> DocumentUploadResponse:
+    workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
     storage_path = f"s3://denialguard-claims/{claim_id}/{file.filename}"
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -63,11 +64,20 @@ async def upload_document(
         res = predict_claim(claim_input)
         api_res = res["api_response"]
         full_rec = res["full_record"]
+        full_rec["workspace_id"] = workspace_id
 
         new_prediction_obj = PredictionResponse(**api_res)
 
         existing_claim.update(full_rec)
         upsert_claim_log(existing_claim)
+
+        insert_notification({
+            "workspace_id": workspace_id,
+            "title": f"Document Attached: {claim_id}",
+            "message": f"Attached '{file.filename}'. Re-evaluated risk dropped to {new_prediction_obj.risk_score:.1f}% ({new_prediction_obj.predicted_carc_code}).",
+            "type": "document",
+            "link": f"/claims/{claim_id}"
+        })
 
     return DocumentUploadResponse(
         status="success",

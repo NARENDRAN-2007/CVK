@@ -1,7 +1,30 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import type { LucideIcon } from "lucide-react";
-import { predictClaim, submitClaimOutcome, getCurrentUser, uploadClaimDocument, generateWorkspaceInvite, type PredictionResponse } from "@/lib/api";
+import {
+  predictClaim,
+  submitClaimOutcome,
+  getCurrentUser,
+  uploadClaimDocument,
+  fetchClaimDocuments,
+  fetchClaimsLog,
+  fetchAppeals,
+  createAppeal,
+  updateAppealStatus,
+  fetchNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  fetchWorkspaceSettings,
+  saveWorkspaceSettings,
+  fetchSecuritySettings,
+  saveSecuritySettings,
+  generateWorkspaceInvite,
+  type PredictionResponse,
+  type AppealItem,
+  type NotificationItem,
+  type WorkspaceSettings,
+  type SecuritySettings,
+} from "@/lib/api";
 import {
   AlertCircle,
   ArrowDownRight,
@@ -72,8 +95,9 @@ const COLORS = {
   violet: "#8B7EC8",
 };
 
-type ClaimStatus = "paid" | "pending" | "denied" | "appealed" | "written_off";
-type Denial = {
+export type ClaimStatus = "paid" | "pending" | "denied" | "appealed" | "written_off";
+
+export type Denial = {
   id: string;
   patientRef: string;
   payer: string;
@@ -92,67 +116,12 @@ type Denial = {
   department: string;
 };
 
-type Appeal = {
-  id: string;
-  claimId: string;
-  payer: string;
-  level: 1 | 2 | 3;
-  status: "drafting" | "submitted" | "awaiting_response" | "won" | "lost";
-  deadline: string;
-  daysToDeadline: number;
-  attachments: number;
-  notes: string;
-};
-
-const INITIAL_DENIALS: Denial[] = [
-  { id: "CLM-2026-08421", patientRef: "PT-•••-4918", payer: "Aetna", cptCodes: ["99214", "93000"], billedAmount: 482, status: "denied", carcCode: "CO-50", carcDescription: "Medical necessity", rarcCode: "N130", groupCode: "CO", agingDays: 42, deadline: "Sep 06, 2026", deadlineDays: 3, assignedTo: "Maya Alvarez", avatar: "MA", department: "Cardiology" },
-  { id: "CLM-2026-08397", patientRef: "PT-•••-7724", payer: "UnitedHealthcare", cptCodes: ["27447"], billedAmount: 18450, status: "denied", carcCode: "CO-197", carcDescription: "Prior authorization required", rarcCode: "N290", groupCode: "CO", agingDays: 38, deadline: "Sep 09, 2026", deadlineDays: 6, assignedTo: "Jordan Lee", avatar: "JL", department: "Orthopedics" },
-  { id: "CLM-2026-08374", patientRef: "PT-•••-1153", payer: "Medicare Part B", cptCodes: ["64483", "77003"], billedAmount: 2180, status: "appealed", carcCode: "CO-16", carcDescription: "Missing required information", rarcCode: "N290", groupCode: "CO", agingDays: 31, deadline: "Sep 13, 2026", deadlineDays: 10, assignedTo: "Maya Alvarez", avatar: "MA", department: "Pain Medicine" },
-  { id: "CLM-2026-08361", patientRef: "PT-•••-3881", payer: "Cigna", cptCodes: ["97110", "97140"], billedAmount: 960, status: "denied", carcCode: "CO-29", carcDescription: "Timely filing limit exceeded", rarcCode: "N211", groupCode: "CO", agingDays: 29, deadline: "Sep 18, 2026", deadlineDays: 15, assignedTo: "Priya Shah", avatar: "PS", department: "Rehab Services" },
-  { id: "CLM-2026-08345", patientRef: "PT-•••-9026", payer: "Humana", cptCodes: ["99223"], billedAmount: 1240, status: "denied", carcCode: "CO-11", carcDescription: "Diagnosis inconsistent with procedure", rarcCode: "N386", groupCode: "CO", agingDays: 24, deadline: "Sep 20, 2026", deadlineDays: 17, assignedTo: "Jordan Lee", avatar: "JL", department: "Hospital Medicine" },
-  { id: "CLM-2026-08298", patientRef: "PT-•••-0457", payer: "Aetna", cptCodes: ["29881"], billedAmount: 5320, status: "appealed", carcCode: "CO-204", carcDescription: "Service not covered under plan", rarcCode: "N115", groupCode: "CO", agingDays: 19, deadline: "Sep 25, 2026", deadlineDays: 22, assignedTo: "Maya Alvarez", avatar: "MA", department: "Orthopedics" },
-  { id: "CLM-2026-08266", patientRef: "PT-•••-6189", payer: "Medicare Part B", cptCodes: ["G0463"], billedAmount: 385, status: "denied", carcCode: "PR-1", carcDescription: "Deductible amount", rarcCode: "N/A", groupCode: "PR", agingDays: 14, deadline: "Oct 02, 2026", deadlineDays: 29, assignedTo: "Priya Shah", avatar: "PS", department: "Primary Care" },
-  { id: "CLM-2026-08211", patientRef: "PT-•••-2276", payer: "Cigna", cptCodes: ["90837"], billedAmount: 240, status: "denied", carcCode: "CO-18", carcDescription: "Duplicate claim/service", rarcCode: "N522", groupCode: "CO", agingDays: 8, deadline: "Oct 05, 2026", deadlineDays: 32, assignedTo: "Jordan Lee", avatar: "JL", department: "Behavioral Health" },
-];
-
-const INITIAL_APPEALS: Appeal[] = [
-  { id: "APL-1049", claimId: "CLM-2026-08374", payer: "Medicare Part B", level: 1, status: "awaiting_response", deadline: "Sep 13, 2026", daysToDeadline: 10, attachments: 4, notes: "Operative report and corrected claim attached." },
-  { id: "APL-1045", claimId: "CLM-2026-08298", payer: "Aetna", level: 2, status: "submitted", deadline: "Sep 25, 2026", daysToDeadline: 22, attachments: 7, notes: "Peer-to-peer review requested by payer." },
-  { id: "APL-1042", claimId: "CLM-2026-08174", payer: "Cigna", level: 1, status: "drafting", deadline: "Sep 08, 2026", daysToDeadline: 5, attachments: 2, notes: "Need updated therapy plan from Rehab Services." },
-  { id: "APL-1038", claimId: "CLM-2026-07988", payer: "Humana", level: 1, status: "awaiting_response", deadline: "Sep 16, 2026", daysToDeadline: 13, attachments: 5, notes: "Medical records received by payer portal." },
-  { id: "APL-1029", claimId: "CLM-2026-07745", payer: "UnitedHealthcare", level: 3, status: "won", deadline: "Aug 28, 2026", daysToDeadline: -6, attachments: 8, notes: "Reconsideration approved in full." },
-];
-
 const payerRules = [
   { name: "Aetna", initials: "AE", color: "#5B8CBF", filing: "180 days", auth: "Prior auth for advanced imaging, elective surgery", appeal: "180 days", method: "Provider portal" },
   { name: "Cigna", initials: "CI", color: "#8B7EC8", filing: "180 days", auth: "Auth required for PT after visit 6", appeal: "180 days", method: "Fax / portal" },
   { name: "Humana", initials: "HU", color: "#C9A24B", filing: "365 days", auth: "Auth for inpatient and DME", appeal: "60 days", method: "Provider portal" },
   { name: "Medicare Part B", initials: "MB", color: "#5FAE93", filing: "1 year", auth: "LCD/NCD-specific; check MAC", appeal: "120 days", method: "Electronic" },
   { name: "UnitedHealthcare", initials: "UH", color: "#C77B7B", filing: "90 days", auth: "Prior auth for surgery and specialty drugs", appeal: "180 days", method: "UHC Link" },
-];
-
-const trendData = [
-  { month: "Apr", rate: 8.4, target: 7.5 },
-  { month: "May", rate: 7.9, target: 7.5 },
-  { month: "Jun", rate: 7.6, target: 7.5 },
-  { month: "Jul", rate: 7.1, target: 7.5 },
-  { month: "Aug", rate: 6.8, target: 7.5 },
-  { month: "Sep", rate: 6.4, target: 7.5 },
-];
-
-const carcData = [
-  { code: "CO", label: "Contractual obligation", value: 68, color: COLORS.blue },
-  { code: "PR", label: "Patient responsibility", value: 16, color: COLORS.gold },
-  { code: "OA", label: "Other adjustment", value: 9, color: COLORS.violet },
-  { code: "PI", label: "Payer initiated", value: 7, color: COLORS.coral },
-];
-
-const analyticsData = [
-  { name: "Aetna", denial: 8.2, recovered: 72 },
-  { name: "UHC", denial: 7.4, recovered: 68 },
-  { name: "Cigna", denial: 6.1, recovered: 75 },
-  { name: "Humana", denial: 5.8, recovered: 66 },
-  { name: "Medicare", denial: 4.9, recovered: 81 },
 ];
 
 const navGroups: { label: string; items: { label: string; path: string; icon: LucideIcon; shortcut?: string }[] }[] = [
@@ -176,9 +145,9 @@ const navGroups: { label: string; items: { label: string; path: string; icon: Lu
   },
 ];
 
-const money = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const money = (value: number) => `$${(Number(value) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-function StatusBadge({ status }: { status: ClaimStatus | Appeal["status"] }) {
+function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; className: string; dot: string }> = {
     paid: { label: "Paid", className: "badge-paid", dot: "bg-[#5FAE93]" },
     pending: { label: "Pending", className: "badge-pending", dot: "bg-[#C9A24B]" },
@@ -187,26 +156,15 @@ function StatusBadge({ status }: { status: ClaimStatus | Appeal["status"] }) {
     written_off: { label: "Written off", className: "badge-neutral", dot: "bg-[#7C8A9C]" },
     drafting: { label: "Drafting", className: "badge-neutral", dot: "bg-[#7C8A9C]" },
     submitted: { label: "Submitted", className: "badge-appealed", dot: "bg-[#8B7EC8]" },
-    awaiting_response: { label: "Awaiting response", className: "badge-pending", dot: "bg-[#C9A24B]" },
-    won: { label: "Won", className: "badge-paid", dot: "bg-[#5FAE93]" },
-    lost: { label: "Lost", className: "badge-denied", dot: "bg-[#C77B7B]" },
+    payer_review: { label: "Payer Review", className: "badge-pending", dot: "bg-[#C9A24B]" },
+    resolved: { label: "Resolved", className: "badge-paid", dot: "bg-[#5FAE93]" },
   };
-  const item = config[status] ?? config.pending;
+  const item = config[status.toLowerCase()] ?? { label: status, className: "badge-neutral", dot: "bg-[#7C8A9C]" };
   return (
     <span className={`status-badge ${item.className}`}>
       <span className={`status-dot ${item.dot}`} />
       {item.label}
     </span>
-  );
-}
-
-function Deadline({ days, label }: { days: number; label: string }) {
-  const tone = days <= 6 ? "deadline-critical" : days <= 14 ? "deadline-warning" : "deadline-safe";
-  return (
-    <div className={`deadline ${tone}`}>
-      <span>{days < 0 ? "Past due" : `${days}d left`}</span>
-      <small>{label}</small>
-    </div>
   );
 }
 
@@ -278,16 +236,6 @@ function FilterRail({ payer, setPayer, aging, setAging, assignee, setAssignee }:
         </select>
       </div>
       <div className="filter-group">
-        <label>CARC group</label>
-        <div className="chip-grid">
-          <button className="filter-chip active">All</button>
-          <button className="filter-chip">CO</button>
-          <button className="filter-chip">PR</button>
-          <button className="filter-chip">OA</button>
-          <button className="filter-chip">PI</button>
-        </div>
-      </div>
-      <div className="filter-group">
         <label>Aging bucket</label>
         <select value={aging} onChange={(event) => setAging(event.target.value)}>
           <option value="all">All aging</option>
@@ -307,11 +255,6 @@ function FilterRail({ payer, setPayer, aging, setAging, assignee, setAssignee }:
         </select>
       </div>
       <div className="filter-divider" />
-      <div className="filter-summary">
-        <div><span className="summary-dot dot-coral" /><span>Critical deadline</span><strong>2</strong></div>
-        <div><span className="summary-dot dot-gold" /><span>Due this week</span><strong>3</strong></div>
-        <div><span className="summary-dot dot-blue" /><span>Unassigned</span><strong>0</strong></div>
-      </div>
       <button className="clear-link" onClick={() => { setPayer("all"); setAging("all"); setAssignee("all"); }}>
         Clear all filters <X size={13} />
       </button>
@@ -319,7 +262,148 @@ function FilterRail({ payer, setPayer, aging, setAging, assignee, setAssignee }:
   );
 }
 
-function Worklist({ denials, onOpenClaim, onAddDenial }: { denials: Denial[]; onOpenClaim: (id: string) => void; onAddDenial: () => void }) {
+function Dashboard({ onNavigate, denials, appeals }: { onNavigate: (path: string) => void; denials: Denial[]; appeals: AppealItem[] }) {
+  const atRiskDenials = denials.filter(d => d.status === "denied" || d.carcCode !== "CLEAN");
+  const totalBilledAtRisk = atRiskDenials.reduce((acc, d) => acc + (d.billedAmount || 0), 0);
+  const cleanCount = denials.filter(d => d.status === "paid" || d.carcCode === "CLEAN").length;
+  const cleanRate = denials.length > 0 ? ((cleanCount / denials.length) * 100).toFixed(1) + "%" : "100%";
+  const preCatches = denials.filter(d => d.agingDays <= 7).length;
+
+  return (
+    <div className="page-content dashboard-page">
+      <SectionHeading
+        eyebrow="Northstar Health System / Revenue Integrity"
+        title="Command center"
+        description="Pre-submission denial prevention, live worklist telemetry, and appeal deadlines."
+        action={
+          <div className="heading-actions">
+            <Button variant="secondary" icon={RefreshCw} onClick={() => toast.success("Refreshed live telemetry")}>
+              Refresh data
+            </Button>
+            <Button icon={Target} onClick={() => onNavigate("/predict")}>
+              Score new claim
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="kpi-grid">
+        <KpiCard
+          label="Active denials in queue"
+          value={String(atRiskDenials.length)}
+          delta="Real-time"
+          detail="Active in worklist"
+          icon={AlertCircle}
+          tone="coral"
+          onClick={() => onNavigate("/worklist")}
+        />
+        <KpiCard
+          label="Dollars at risk"
+          value={money(totalBilledAtRisk)}
+          delta="Pre-submission"
+          detail="Awaiting review"
+          icon={CircleDollarSign}
+          tone="gold"
+          onClick={() => onNavigate("/worklist")}
+        />
+        <KpiCard
+          label="Clean claim pass rate"
+          value={cleanRate}
+          delta="Target: 95%"
+          detail="Evaluated submissions"
+          icon={CheckCircle2}
+          tone="blue"
+          onClick={() => onNavigate("/analytics")}
+        />
+        <KpiCard
+          label="Active appeals"
+          value={String(appeals.length)}
+          delta="In progress"
+          detail="Across 4 stages"
+          icon={FileCheck2}
+          tone="violet"
+          onClick={() => onNavigate("/appeals")}
+        />
+      </div>
+
+      {denials.length === 0 ? (
+        <div className="mt-8 rounded-2xl border border-dashed border-[#D9E0E8] bg-white/60 p-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#5B8CBF]/15 text-[#5B8CBF]">
+            <Target size={24} />
+          </div>
+          <h3 className="mt-4 font-serif text-[22px] text-[#1E2F4D]">Clean Workspace Initialized</h3>
+          <p className="mx-auto mt-2 max-w-md text-[13px] text-[#7C8A9C]">
+            No claims or denials have been scored in this workspace yet. Use the Pre-Submission Predictor to evaluate claims against the XGBoost & SHAP models.
+          </p>
+          <div className="mt-6 flex justify-center gap-3">
+            <Button icon={Target} onClick={() => onNavigate("/predict")}>Score First Claim</Button>
+            <Button variant="secondary" icon={UsersRound} onClick={() => onNavigate("/settings")}>Invite Team Members</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="charts-grid mt-6">
+          <section className="panel chart-panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Worklist Telemetry</span>
+                <h2>Active Claim Risk Exposure</h2>
+              </div>
+              <Button variant="ghost" onClick={() => onNavigate("/worklist")}>View Worklist <ArrowRight size={13} /></Button>
+            </div>
+            <div className="p-4">
+              <div className="space-y-3">
+                {denials.slice(0, 5).map((d) => (
+                  <div key={d.id} className="flex items-center justify-between rounded-xl border border-[#EEF2F6] bg-white p-3 shadow-sm hover:border-[#5B8CBF]/40 cursor-pointer" onClick={() => onNavigate(`/claims/${d.id}`)}>
+                    <div>
+                      <div className="flex items-center gap-2 font-mono text-[13px] font-bold text-[#1E2F4D]">
+                        {d.id}
+                        <span className="rounded-md bg-[#EEF2F6] px-1.5 py-0.5 font-sans text-[10px] text-[#7C8A9C]">{d.payer}</span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-[#7C8A9C]">{d.carcCode}: {d.carcDescription}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[13px] font-bold text-[#1E2F4D]">{money(d.billedAmount)}</div>
+                      <StatusBadge status={d.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="deadlines-panel panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Action queue</span>
+                <h2>Active Appeals</h2>
+              </div>
+              <button className="text-button" onClick={() => onNavigate("/appeals")}>View all <ArrowRight size={13} /></button>
+            </div>
+            <div className="deadline-list">
+              {appeals.length === 0 ? (
+                <div className="p-8 text-center text-[12px] text-[#7C8A9C]">
+                  No appeals currently in progress. Start an appeal from the worklist or appeals pipeline.
+                </div>
+              ) : (
+                appeals.map((appeal) => (
+                  <button key={appeal.id} className="deadline-item" onClick={() => onNavigate("/appeals")}>
+                    <div className="deadline-copy">
+                      <strong>{appeal.claim_id}</strong>
+                      <span>{appeal.payer} · {appeal.appeal_level} ({appeal.status})</span>
+                    </div>
+                    <ChevronRight size={15} color={COLORS.muted} />
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void; onScoreClaim: () => void }) {
   const [payer, setPayer] = useState("all");
   const [aging, setAging] = useState("all");
   const [assignee, setAssignee] = useState("all");
@@ -341,247 +425,113 @@ function Worklist({ denials, onOpenClaim, onAddDenial }: { denials: Denial[]; on
   return (
     <div className="page-content worklist-page">
       <SectionHeading
-        eyebrow="Revenue integrity / Queue 01"
+        eyebrow="Revenue integrity / Active Queue"
         title="Denial worklist"
         description="Prioritized by appeal deadline, aging, and financial exposure."
         action={
           <div className="heading-actions">
-            <Button
-              variant="secondary"
-              icon={Download}
-              onClick={() => {
-                const header = "Claim ID,Patient Ref,Payer,CARC,Amount,Aging,Deadline,Owner,Status\n";
-                const rows = filtered.map(c => `${c.id},${c.patientRef},${c.payer},${c.carcCode},${c.billedAmount},${c.agingDays},${c.deadline},${c.assignedTo},${c.status}`).join("\n");
-                const blob = new Blob([header + rows], { type: "text/csv" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `denials-worklist-${new Date().toISOString().slice(0, 10)}.csv`;
-                a.click();
-                toast.success("Worklist exported successfully", { description: "Downloaded CSV with active claims." });
-              }}
-            >
-              Export queue
-            </Button>
-            <Button icon={Plus} onClick={onAddDenial}>Add denial</Button>
+            {filtered.length > 0 && (
+              <Button
+                variant="secondary"
+                icon={Download}
+                onClick={() => {
+                  const header = "Claim ID,Patient Ref,Payer,CARC,Amount,Aging,Deadline,Owner,Status\n";
+                  const rows = filtered.map(c => `${c.id},${c.patientRef},${c.payer},${c.carcCode},${c.billedAmount},${c.agingDays},${c.deadline},${c.assignedTo},${c.status}`).join("\n");
+                  const blob = new Blob([header + rows], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `denials-worklist-${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  toast.success("Worklist exported successfully");
+                }}
+              >
+                Export queue
+              </Button>
+            )}
+            <Button icon={Plus} onClick={onScoreClaim}>Score claim</Button>
           </div>
         }
       />
-      <div className="worklist-metrics">
-        <div className="metric-inline"><span className="metric-icon coral"><AlertCircle size={15} /></span><div><strong>{filtered.filter(c => c.status === "denied").length}</strong><span>open denials</span></div></div>
-        <div className="metric-inline"><span className="metric-icon gold"><CalendarClock size={15} /></span><div><strong>3</strong><span>deadlines ≤ 7d</span></div></div>
-        <div className="metric-inline"><span className="metric-icon blue"><CircleDollarSign size={15} /></span><div><strong>${(filtered.reduce((acc, c) => acc + c.billedAmount, 0) / 1000).toFixed(1)}k</strong><span>exposure in queue</span></div></div>
-        <div className="metric-inline"><span className="metric-icon violet"><FileCheck2 size={15} /></span><div><strong>{filtered.filter(c => c.status === "appealed").length}</strong><span>in appeal</span></div></div>
-      </div>
-      <div className="worklist-layout">
-        <FilterRail {...{ payer, setPayer, aging, setAging, assignee, setAssignee }} />
-        <section className="table-panel">
-          <div className="table-toolbar">
-            <div className="table-search">
-              <Search size={16} />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search claim, patient ref, payer, CARC..." />
-              <kbd>⌘ K</kbd>
-            </div>
-            <div className="toolbar-actions">
-              <button className="icon-button" title="Filter view"><ListFilter size={16} /></button>
-              <button className="icon-button" title="Refresh" onClick={() => toast.success("Queue refreshed")}><RefreshCw size={15} /></button>
-              <span className="table-count">{filtered.length} of {denials.length} claims</span>
-            </div>
+
+      {denials.length === 0 ? (
+        <div className="mt-8 rounded-2xl border border-dashed border-[#D9E0E8] bg-white/60 p-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#5B8CBF]/15 text-[#5B8CBF]">
+            <ClipboardCheck size={24} />
           </div>
-          {selected.length > 0 && (
-            <div className="bulk-bar">
-              <span><strong>{selected.length}</strong> selected</span>
-              <button onClick={() => toast.success("Claims assigned", { description: "Selected claims assigned to Maya Alvarez." })}>
-                <UsersRound size={14} />Assign
-              </button>
-              <button onClick={() => toast.success("Marked for appeal")}>
-                <FileCheck2 size={14} />Mark for appeal
-              </button>
-              <button onClick={() => toast.success("Export started")}>
-                <Download size={14} />Export
-              </button>
-              <button className="bulk-clear" onClick={() => setSelected([])}><X size={14} /></button>
+          <h3 className="mt-4 font-serif text-[22px] text-[#1E2F4D]">Worklist is Clean</h3>
+          <p className="mx-auto mt-2 max-w-md text-[13px] text-[#7C8A9C]">
+            No claims currently require denial remediation or appeal action. Run pre-submission scoring on pending claims to catch rejections before submission.
+          </p>
+          <div className="mt-6">
+            <Button icon={Target} onClick={onScoreClaim}>Score Pending Claim</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="worklist-layout">
+          <FilterRail {...{ payer, setPayer, aging, setAging, assignee, setAssignee }} />
+          <section className="table-panel">
+            <div className="table-toolbar">
+              <div className="table-search">
+                <Search size={16} />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search claim, patient ref, payer, CARC..." />
+                <kbd>⌘ K</kbd>
+              </div>
+              <div className="toolbar-actions">
+                <button className="icon-button" title="Refresh" onClick={() => toast.success("Queue refreshed")}><RefreshCw size={15} /></button>
+                <span className="table-count">{filtered.length} of {denials.length} claims</span>
+              </div>
             </div>
-          )}
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="check-cell"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all claims" /></th>
-                  <th>Claim / patient ref</th>
-                  <th>Payer</th>
-                  <th>Denial reason</th>
-                  <th>Exposure</th>
-                  <th>Aging</th>
-                  <th>Appeal deadline</th>
-                  <th>Owner</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((claim, index) => (
-                  <tr key={claim.id} className="table-row" style={{ animationDelay: `${index * 40}ms` }} onClick={() => onOpenClaim(claim.id)}>
-                    <td className="check-cell" onClick={(event) => event.stopPropagation()}>
-                      <input type="checkbox" checked={selected.includes(claim.id)} onChange={() => setSelected((current) => current.includes(claim.id) ? current.filter((id) => id !== claim.id) : [...current, claim.id])} aria-label={`Select ${claim.id}`} />
-                    </td>
-                    <td><div className="claim-cell"><strong>{claim.id}</strong><span>{claim.patientRef} <em>·</em> {claim.department}</span></div></td>
-                    <td><div className="payer-cell"><span className="payer-mark">{claim.payer === "Medicare Part B" ? "MB" : claim.payer.slice(0, 2).toUpperCase()}</span>{claim.payer}</div></td>
-                    <td><div className="reason-cell"><div><strong>{claim.carcCode}</strong><span>{claim.carcDescription}</span></div><small>{claim.rarcCode !== "N/A" ? `RARC ${claim.rarcCode}` : "No RARC"}</small></div></td>
-                    <td><span className="tabular amount">{money(claim.billedAmount)}</span><small className="subtle">{claim.cptCodes.join(" · ")}</small></td>
-                    <td><span className={`aging-number ${claim.agingDays > 30 ? "aging-high" : claim.agingDays > 14 ? "aging-mid" : "aging-low"}`}>{claim.agingDays}d</span></td>
-                    <td><Deadline days={claim.deadlineDays} label={claim.deadline} /></td>
-                    <td><div className="owner-cell"><Avatar initials={claim.avatar} tone={claim.avatar === "PS" ? "gold" : claim.avatar === "JL" ? "violet" : "blue"} /><span>{claim.assignedTo.split(" ")[0]}</span></div></td>
-                    <td><StatusBadge status={claim.status} /></td>
-                    <td><ChevronRight size={15} color={COLORS.muted} /></td>
+            <div className="table-wrap">
+              <table className="claim-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
+                    <th>Claim ID / Patient</th>
+                    <th>Payer</th>
+                    <th>CARC / Reason</th>
+                    <th className="text-right">Denied amount</th>
+                    <th>Deadline</th>
+                    <th>Status</th>
+                    <th>Assigned</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length === 0 && (
-              <div className="zero-state">
-                <div className="empty-icon"><Search size={21} /></div>
-                <h3>No denials match these filters</h3>
-                <p>Try clearing a filter or searching for a different claim ID.</p>
-                <button className="clear-link" onClick={() => { setSearch(""); setPayer("all"); setAging("all"); setAssignee("all"); }}>
-                  Clear filters <X size={13} />
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="table-footer">
-            <span>Showing {filtered.length} prioritized denials</span>
-            <div className="pagination">
-              <button className="icon-button" disabled><ArrowLeft size={14} /></button>
-              <button className="page-number active">1</button>
-              <button className="page-number">2</button>
-              <button className="icon-button"><ArrowRight size={14} /></button>
+                </thead>
+                <tbody>
+                  {filtered.map((claim) => (
+                    <tr key={claim.id} onClick={() => onOpenClaim(claim.id)} className="clickable-row">
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(claim.id)}
+                          onChange={() => setSelected(selected.includes(claim.id) ? selected.filter(id => id !== claim.id) : [...selected, claim.id])}
+                        />
+                      </td>
+                      <td>
+                        <strong>{claim.id}</strong>
+                        <span className="subtle">{claim.patientRef} · {claim.cptCodes.join(", ")}</span>
+                      </td>
+                      <td>{claim.payer}</td>
+                      <td>
+                        <span className="carc-code-tag">{claim.carcCode}</span>
+                        <span className="subtle">{claim.carcDescription}</span>
+                      </td>
+                      <td className="text-right font-mono font-bold text-[#1E2F4D]">{money(claim.billedAmount)}</td>
+                      <td><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
+                      <td><StatusBadge status={claim.status} /></td>
+                      <td>
+                        <div className="flex items-center gap-1.5 text-[12px]">
+                          <Avatar initials={claim.avatar} tone="blue" size="sm" />
+                          <span>{claim.assignedTo}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({ onNavigate, appeals }: { onNavigate: (path: string) => void; appeals: Appeal[] }) {
-  return (
-    <div className="page-content">
-      <SectionHeading
-        eyebrow="Portfolio overview / Sep 03, 2026"
-        title="Good morning, Maya"
-        description="Here’s the revenue integrity picture for Northstar Health System."
-        action={<Button variant="secondary" icon={RefreshCw} onClick={() => toast.success("Dashboard refreshed")}>Refresh data</Button>}
-      />
-      <div className="kpi-grid">
-        <KpiCard label="Open denials" value="$124,860" delta="12.8%" detail="vs. prior 30 days" icon={CircleDollarSign} tone="coral" onClick={() => onNavigate("/worklist")} />
-        <KpiCard label="Denial rate" value="6.4%" delta="0.9 pts" detail="trailing 30 days" icon={TrendingDown} tone="blue" />
-        <KpiCard label="Avg. days to resolve" value="18.6d" delta="2.4d" detail="faster than target" icon={Clock3} tone="gold" />
-        <KpiCard label="Appeal win rate" value="71.8%" delta="4.6 pts" detail="year to date" icon={ShieldCheck} tone="violet" onClick={() => onNavigate("/appeals")} />
-      </div>
-      <div className="dashboard-grid">
-        <section className="chart-panel panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Trend / trailing 6 months</span>
-              <h2>Denial rate is trending down</h2>
-            </div>
-            <div className="legend">
-              <span><i className="legend-line blue-line" />Denial rate</span>
-              <span><i className="legend-line target-line" />Target</span>
-            </div>
-          </div>
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData} margin={{ top: 12, right: 10, left: -16, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="denialFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#5B8CBF" stopOpacity={0.26} />
-                    <stop offset="100%" stopColor="#5B8CBF" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} stroke="#DDE4EC" strokeDasharray="3 4" />
-                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: COLORS.muted, fontSize: 11 }} />
-                <YAxis domain={[4, 10]} axisLine={false} tickLine={false} tick={{ fill: COLORS.muted, fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
-                <Tooltip contentStyle={{ border: "1px solid #DDE4EC", borderRadius: 12, background: "#FBFAF8", fontSize: 12, color: COLORS.ink }} formatter={(value: number) => [`${value}%`, "Denial rate"]} />
-                <Area type="monotone" dataKey="target" stroke="#C9A24B" strokeWidth={1.5} strokeDasharray="4 4" fill="none" />
-                <Area type="monotone" dataKey="rate" stroke="#5B8CBF" strokeWidth={2.5} fill="url(#denialFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="chart-callout">
-            <span className="callout-icon"><TrendingDown size={14} /></span>
-            <span><strong>1.3 pts lower</strong> than April — prior authorization edits are making the biggest impact.</span>
-            <button onClick={() => onNavigate("/analytics")}>View root causes <ArrowRight size={13} /></button>
-          </div>
-        </section>
-
-        <section className="deadlines-panel panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Action queue</span>
-              <h2>Deadlines this week</h2>
-            </div>
-            <button className="text-button" onClick={() => onNavigate("/appeals")}>View all <ArrowRight size={13} /></button>
-          </div>
-          <div className="deadline-list">
-            {appeals.filter((appeal) => appeal.daysToDeadline > 0 && appeal.daysToDeadline <= 14).map((appeal) => (
-              <button key={appeal.id} className="deadline-item" onClick={() => onNavigate("/appeals")}>
-                <div className={`deadline-count ${appeal.daysToDeadline <= 6 ? "critical" : "warning"}`}>
-                  <strong>{appeal.daysToDeadline}</strong>
-                  <span>days</span>
-                </div>
-                <div className="deadline-copy">
-                  <strong>{appeal.claimId}</strong>
-                  <span>{appeal.payer} · Level {appeal.level} appeal</span>
-                </div>
-                <ChevronRight size={15} color={COLORS.muted} />
-              </button>
-            ))}
-          </div>
-          <div className="deadline-footer">
-            <span className="mini-status"><span className="status-dot bg-[#C77B7B]" />2 need attention today</span>
-            <span className="mini-status"><span className="status-dot bg-[#C9A24B]" />$19.4k at risk</span>
-          </div>
-        </section>
-      </div>
-
-      <div className="bottom-grid">
-        <section className="panel carc-panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Distribution / open denials</span>
-              <h2>By CARC group code</h2>
-            </div>
-            <button className="icon-button"><MoreHorizontal size={17} /></button>
-          </div>
-          <div className="carc-list">
-            {carcData.map((item) => (
-              <div className="carc-row" key={item.code}>
-                <div className="carc-label">
-                  <span className="carc-code" style={{ background: `${item.color}18`, color: item.color }}>{item.code}</span>
-                  <span>{item.label}</span>
-                  <strong>{item.value}%</strong>
-                </div>
-                <div className="bar-track">
-                  <span style={{ width: `${item.value}%`, background: item.color }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel insight-panel">
-          <div className="insight-kicker"><Sparkles size={15} /> Signal worth a look</div>
-          <h2>CO-197 is up 18% with UnitedHealthcare</h2>
-          <p>Prior authorization denials are now the largest avoidable category for Orthopedics. Review the payer rule before the next surgical batch.</p>
-          <button className="text-button" onClick={() => onNavigate("/payers")}>Open payer rules <ArrowRight size={13} /></button>
-          <div className="insight-footer">
-            <span><AlertCircle size={14} /> 24 claims affected</span>
-            <span>$42.8k exposure</span>
-          </div>
-        </section>
-      </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -594,11 +544,10 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
     providerSpecialty: "Orthopedics",
     cpt: "27447",
     icd10: "M17.11",
-    diagnosis: "M17.11 — Unilateral primary osteoarthritis, right knee",
     paStatus: "Missing",
     eligibilityStatus: "Active",
     networkStatus: "In-Network",
-    documentationFlag: "true",
+    documentationFlag: "false",
     chargeAmount: "18450",
     daysToDeadline: "45",
   });
@@ -610,7 +559,6 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
         providerSpecialty: "Orthopedics",
         cpt: "27447",
         icd10: "M17.11",
-        diagnosis: "M17.11 — Primary osteoarthritis, right knee",
         paStatus: "Missing",
         eligibilityStatus: "Active",
         networkStatus: "In-Network",
@@ -624,7 +572,6 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
         providerSpecialty: "Cardiology",
         cpt: "99214",
         icd10: "I10",
-        diagnosis: "I10 — Essential primary hypertension",
         paStatus: "Approved",
         eligibilityStatus: "Active",
         networkStatus: "In-Network",
@@ -638,7 +585,6 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
         providerSpecialty: "Rehab Services",
         cpt: "97110",
         icd10: "M54.5",
-        diagnosis: "M54.5 — Low back pain",
         paStatus: "Approved",
         eligibilityStatus: "Active",
         networkStatus: "In-Network",
@@ -652,7 +598,6 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
         providerSpecialty: "Hospital Medicine",
         cpt: "99223",
         icd10: "J18.9",
-        diagnosis: "J18.9 — Pneumonia, unspecified organism",
         paStatus: "Not Required",
         eligibilityStatus: "Active",
         networkStatus: "In-Network",
@@ -697,313 +642,176 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
       patientRef: `PT-•••-${Math.floor(1000 + Math.random() * 9000)}`,
       payer: form.payer,
       cptCodes: [form.cpt],
-      billedAmount: Number(form.chargeAmount) || (form.cpt === "27447" ? 18450 : 2400),
-      status: result.denialRiskScore > 35 ? "denied" : "paid",
+      billedAmount: Number(form.chargeAmount) || 18450,
+      status: result.denialRiskScore >= 60 ? "denied" : "pending",
       carcCode: result.predictedCarcCode,
-      carcDescription: result.predictedCarcCode === "CLEAN" ? "Clean claim - verified for submission" : `Predicted ${result.predictedCarcCode}`,
+      carcDescription: result.predictedCarcCode === "CO-197"
+        ? "Precertification / authorization absent"
+        : result.predictedCarcCode === "CO-16"
+        ? "Missing required clinical documentation"
+        : "Pre-submission risk flagged",
       rarcCode: "N290",
       groupCode: "CO",
       agingDays: 1,
-      deadline: "Oct 15, 2026",
-      deadlineDays: Number(form.daysToDeadline) || 42,
-      assignedTo: "Maya Alvarez",
-      avatar: "MA",
+      deadline: "30 days",
+      deadlineDays: Number(form.daysToDeadline) || 30,
+      assignedTo: getCurrentUser().name || "Maya Alvarez",
+      avatar: (getCurrentUser().name || "Maya Alvarez").split(" ").map(n => n[0]).join(""),
       department: form.providerSpecialty,
     };
     onSaveClaim(newClaim);
-    toast.success("Saved to Live Denial Worklist", { description: `Claim ${newClaim.id} registered in queue.` });
+    toast.success("Claim added to Worklist", {
+      description: `${newClaim.id} is now tracked in your active queue.`,
+    });
   };
 
-  const riskScoreVal = result ? result.denialRiskScore : 0;
-  const isHighRisk = riskScoreVal >= 50;
-  const isModerateRisk = riskScoreVal >= 35 && riskScoreVal < 50;
-  const riskColor = isHighRisk ? COLORS.coral : isModerateRisk ? COLORS.gold : COLORS.green;
-
   return (
-    <div className="page-content">
+    <div className="page-content predict-page">
       <SectionHeading
-        eyebrow="Pre-submission intelligence"
+        eyebrow="Pre-submission Intelligence"
         title="Predict denial risk"
-        description="Run real-time XGBoost + SHAP inference against 120,000 CMS claim denial patterns before submission."
-        action={
-          <div className="flex items-center gap-2">
-            <span className="prediction-badge"><span className="pulse-dot" />FastAPI + SHAP Active</span>
-          </div>
-        }
+        description="Score claim attributes against XGBoost + SHAP before transmitting EDI 837."
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold text-[#7C8A9C] uppercase tracking-wider">Quick Presets:</span>
-        <button type="button" onClick={() => loadPreset("high_risk")} className="rounded-lg border border-[#DDE4EC] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1E2F4D] hover:bg-[#F3F6F9] hover:border-[#5B8CBF] transition">
-          High-Risk Ortho (Missing PA)
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Quick presets:</span>
+        <button onClick={() => loadPreset("high_risk")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+          🚨 High-Risk Ortho (CO-197)
         </button>
-        <button type="button" onClick={() => loadPreset("clean")} className="rounded-lg border border-[#DDE4EC] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1E2F4D] hover:bg-[#F3F6F9] hover:border-[#5B8CBF] transition">
-          Clean Cardiology (Approved PA)
+        <button onClick={() => loadPreset("clean")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+          ✅ Clean Cardiology (Passed)
         </button>
-        <button type="button" onClick={() => loadPreset("filing_limit")} className="rounded-lg border border-[#DDE4EC] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1E2F4D] hover:bg-[#F3F6F9] hover:border-[#5B8CBF] transition">
-          Filing Limit Warning (4d Left)
+        <button onClick={() => loadPreset("filing_limit")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+          ⏳ Timely Filing Warning (CO-29)
         </button>
-        <button type="button" onClick={() => loadPreset("missing_doc")} className="rounded-lg border border-[#DDE4EC] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1E2F4D] hover:bg-[#F3F6F9] hover:border-[#5B8CBF] transition">
-          Missing Clinical Documentation
+        <button onClick={() => loadPreset("missing_doc")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+          📄 Missing Chart Notes (CO-16)
         </button>
       </div>
 
-      <div className="predict-layout">
-        <form className="predict-form panel" onSubmit={runPrediction}>
-          <div className="form-intro">
-            <div className="form-icon"><Target size={18} /></div>
+      <div className="predict-grid">
+        <form onSubmit={runPrediction} className="predict-form panel">
+          <div className="panel-header">
             <div>
+              <span className="eyebrow">CMS-1500 / UB-04 Parameters</span>
               <h2>Claim Parameters</h2>
-              <p>Enter claim attributes at charge capture. Masked & HIPAA compliant.</p>
             </div>
           </div>
+
           <div className="form-grid">
-            <label className="form-field">
-              <span>Payer</span>
-              <select value={form.payer} onChange={(event) => setForm({ ...form, payer: event.target.value })}>
-                {payerRules.map((payer) => (
-                  <option key={payer.name} value={payer.name}>{payer.name}</option>
-                ))}
+            <div className="form-field">
+              <label>Payer</label>
+              <select value={form.payer} onChange={(e) => setForm({ ...form, payer: e.target.value })}>
+                {payerRules.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
               </select>
-            </label>
-            <label className="form-field">
-              <span>Provider Specialty</span>
-              <select value={form.providerSpecialty} onChange={(event) => setForm({ ...form, providerSpecialty: event.target.value })}>
+            </div>
+            <div className="form-field">
+              <label>Specialty</label>
+              <select value={form.providerSpecialty} onChange={(e) => setForm({ ...form, providerSpecialty: e.target.value })}>
                 <option value="Orthopedics">Orthopedics</option>
                 <option value="Cardiology">Cardiology</option>
-                <option value="Internal Medicine">Internal Medicine</option>
-                <option value="General Surgery">General Surgery</option>
-                <option value="Neurology">Neurology</option>
-                <option value="Rehab Services">Rehab Services</option>
                 <option value="Pain Medicine">Pain Medicine</option>
-                <option value="Behavioral Health">Behavioral Health</option>
+                <option value="Rehab Services">Rehab Services</option>
+                <option value="Hospital Medicine">Hospital Medicine</option>
+                <option value="Primary Care">Primary Care</option>
               </select>
-            </label>
-            <label className="form-field">
-              <span>Primary CPT / HCPCS</span>
-              <input value={form.cpt} onChange={(event) => setForm({ ...form, cpt: event.target.value })} placeholder="e.g. 27447" />
-            </label>
-            <label className="form-field">
-              <span>Diagnosis ICD-10</span>
-              <input value={form.icd10} onChange={(event) => setForm({ ...form, icd10: event.target.value })} placeholder="e.g. M17.11" />
-            </label>
-            <label className="form-field">
-              <span>Prior Authorization</span>
-              <select value={form.paStatus} onChange={(event) => setForm({ ...form, paStatus: event.target.value })}>
-                <option value="Missing">Missing (Absent)</option>
-                <option value="Approved">Approved (Verified)</option>
-                <option value="Pending">Pending Review</option>
-                <option value="Denied">Denied Prior Auth</option>
-                <option value="Not Required">Not Required by Payer</option>
+            </div>
+            <div className="form-field">
+              <label>CPT Code</label>
+              <input value={form.cpt} onChange={(e) => setForm({ ...form, cpt: e.target.value })} required />
+            </div>
+            <div className="form-field">
+              <label>ICD-10 Diagnosis</label>
+              <input value={form.icd10} onChange={(e) => setForm({ ...form, icd10: e.target.value })} required />
+            </div>
+            <div className="form-field">
+              <label>Prior Authorization</label>
+              <select value={form.paStatus} onChange={(e) => setForm({ ...form, paStatus: e.target.value })}>
+                <option value="Missing">Missing / Absent</option>
+                <option value="Approved">Approved / Verified</option>
+                <option value="Pending">Pending Decision</option>
+                <option value="Denied">Denied by Payer</option>
+                <option value="Not Required">Not Required</option>
               </select>
-            </label>
-            <label className="form-field">
-              <span>Patient Eligibility</span>
-              <select value={form.eligibilityStatus} onChange={(event) => setForm({ ...form, eligibilityStatus: event.target.value })}>
-                <option value="Active">Active (Verified on DOS)</option>
-                <option value="Inactive">Inactive Coverage</option>
-                <option value="Terminated">Coverage Terminated</option>
+            </div>
+            <div className="form-field">
+              <label>Documentation Attached</label>
+              <select value={form.documentationFlag} onChange={(e) => setForm({ ...form, documentationFlag: e.target.value })}>
+                <option value="true">Yes · Operative/Chart note attached</option>
+                <option value="false">No · Unattached</option>
               </select>
-            </label>
-            <label className="form-field">
-              <span>Billed Charge Amount ($)</span>
-              <input type="number" value={form.chargeAmount} onChange={(event) => setForm({ ...form, chargeAmount: event.target.value })} />
-            </label>
-            <label className="form-field">
-              <span>Days to Filing Deadline</span>
-              <input type="number" value={form.daysToDeadline} onChange={(event) => setForm({ ...form, daysToDeadline: event.target.value })} />
-            </label>
-            <label className="form-field">
-              <span>Clinical Chart Notes Attached?</span>
-              <select value={form.documentationFlag} onChange={(event) => setForm({ ...form, documentationFlag: event.target.value })}>
-                <option value="true">Yes (Complete Chart Attached)</option>
-                <option value="false">No (Documentation Missing)</option>
-              </select>
-            </label>
-            <label className="form-field">
-              <span>Network Status</span>
-              <select value={form.networkStatus} onChange={(event) => setForm({ ...form, networkStatus: event.target.value })}>
-                <option value="In-Network">In-Network Contracted</option>
-                <option value="Out-of-Network">Out-of-Network Facility</option>
-              </select>
-            </label>
+            </div>
+            <div className="form-field">
+              <label>Billed Charge ($)</label>
+              <input type="number" value={form.chargeAmount} onChange={(e) => setForm({ ...form, chargeAmount: e.target.value })} required />
+            </div>
+            <div className="form-field">
+              <label>Days to Filing Deadline</label>
+              <input type="number" value={form.daysToDeadline} onChange={(e) => setForm({ ...form, daysToDeadline: e.target.value })} required />
+            </div>
           </div>
-          <div className="form-note">
-            <LockKeyhole size={14} />
-            <span>FastAPI ML engine runs exact TreeExplainer SHAP attribution on 120,000 real claims data.</span>
+
+          <div className="mt-6 flex justify-end">
+            <Button type="submit" icon={Target} className={loading ? "opacity-75" : ""}>
+              {loading ? "Running XGBoost & SHAP..." : "Evaluate Denial Risk"}
+            </Button>
           </div>
-          <Button type="submit" icon={Sparkles} className="predict-submit" disabled={loading}>
-            {loading ? "Evaluating XGBoost Model..." : "Run ML Denial Prediction"}
-          </Button>
         </form>
 
-        <section className={`prediction-result panel ${result ? "revealed" : ""}`}>
+        <section className="predict-result panel">
+          <div className="panel-header">
+            <div>
+              <span className="eyebrow">Explainable AI</span>
+              <h2>Prediction & Root Causes</h2>
+            </div>
+          </div>
+
           {result ? (
-            <>
-              <div className="result-header">
+            <div className="space-y-5 p-2">
+              <div className="flex items-center justify-between rounded-2xl bg-[#EEF2F6] p-4">
                 <div>
-                  <span className="eyebrow">Prediction result / {form.payer}</span>
-                  <h2>{isHighRisk ? "High denial risk detected" : isModerateRisk ? "Moderate denial risk" : "Clean claim confidence"}</h2>
-                </div>
-                <span className="result-stamp">Inference latency: &lt; 80ms</span>
-              </div>
-              <div className="risk-readout">
-                <div className="risk-ring">
-                  <svg viewBox="0 0 120 120">
-                    <circle cx="60" cy="60" r="49" fill="none" stroke="#E9E4DF" strokeWidth="8" />
-                    <circle
-                      cx="60"
-                      cy="60"
-                      r="49"
-                      fill="none"
-                      stroke={riskColor}
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                      strokeDasharray="308"
-                      strokeDashoffset={308 - (308 * Math.min(100, Math.max(0, riskScoreVal))) / 100}
-                      transform="rotate(-90 60 60)"
-                    />
-                  </svg>
-                  <div><strong>{riskScoreVal.toFixed(1)}%</strong><span>Risk</span></div>
-                </div>
-                <div className="risk-copy">
-                  <span className="risk-label">{isHighRisk ? "Predicted CARC Reason" : "Claim Status"}</span>
-                  <strong style={{ color: riskColor }}>{result.predictedCarcCode}</strong>
-                  <p className="text-[13px] text-[#48586B]">{result.predictedCarcCode === "CLEAN" ? "Clean claim validation passed" : `Trigger Code ${result.predictedCarcCode}`}</p>
-                  <div className="suggested-fix">
-                    <CheckCircle2 size={15} color={COLORS.green} />
-                    <span><strong>Action:</strong> {result.suggestedCorrectiveAction}</span>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Predicted Denial Risk</div>
+                  <div className="font-serif text-[42px] leading-tight text-[#1E2F4D]">
+                    {result.denialRiskScore.toFixed(1)}%
                   </div>
                 </div>
+                <div className="text-right">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Likely CARC</div>
+                  <div className="font-mono text-[22px] font-bold text-[#C77B7B]">{result.predictedCarcCode}</div>
+                </div>
               </div>
-              <div className="factor-heading">
-                <span>SHAP Root Cause Factors</span>
-                <span>Impact</span>
-              </div>
-              <div className="factor-list">
-                {result.topContributingFactors.map((factor) => {
-                  const isPositiveRisk = factor.direction === "positive" || factor.direction === "increases_risk";
-                  return (
-                    <div className="factor-row" key={factor.label}>
-                      <div>
-                        {isPositiveRisk ? (
-                          <ArrowUpRight size={14} color={COLORS.coral} />
-                        ) : (
-                          <ArrowDownRight size={14} color={COLORS.green} />
-                        )}
-                        <span>{factor.label}</span>
-                      </div>
-                      <div className="factor-bar">
-                        <span
-                          style={{
-                            width: `${Math.min(100, Math.abs(factor.impact) * 15)}%`,
-                            background: !isPositiveRisk ? COLORS.green : Math.abs(factor.impact) > 2 ? COLORS.coral : COLORS.gold,
-                          }}
-                        />
-                      </div>
-                      <strong className={isPositiveRisk ? "text-coral" : "text-green"}>
-                        {isPositiveRisk ? `+${factor.impact.toFixed(2)}` : factor.impact.toFixed(2)}
-                      </strong>
+
+              <div>
+                <h4 className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Top Contributing SHAP Factors</h4>
+                <div className="mt-2 space-y-2">
+                  {result.topContributingFactors.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between rounded-xl border border-[#DDE4EC] bg-white p-2.5 text-[12px]">
+                      <span className="font-medium text-[#1E2F4D]">{f.label}</span>
+                      <span className={`font-mono font-bold ${f.direction === "positive" || f.direction === "increases_risk" ? "text-[#C77B7B]" : "text-[#5FAE93]"}`}>
+                        {f.direction === "positive" || f.direction === "increases_risk" ? `+${f.impact.toFixed(2)}` : `-${Math.abs(f.impact).toFixed(2)}`}
+                      </span>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-              <div className="result-actions">
-                <Button variant="secondary" icon={FileText} onClick={saveToQueue}>Save to Worklist</Button>
-                <Button icon={ArrowRight} onClick={() => toast.success("Claim validated", { description: "Claim packet ready for EDI transmission." })}>
-                  Validate Next Claim
-                </Button>
+
+              <div className="rounded-xl border border-[#5B8CBF]/30 bg-[#5B8CBF]/10 p-3 text-[12px] text-[#1E2F4D]">
+                <strong>Suggested Fix:</strong>
+                <p className="mt-1 text-[#48586B]">{result.suggestedCorrectiveAction}</p>
               </div>
-            </>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button icon={Plus} onClick={saveToQueue}>Save to Worklist</Button>
+              </div>
+            </div>
           ) : (
-            <div className="prediction-empty">
-              <div className="empty-icon prediction"><Sparkles size={22} /></div>
-              <span className="eyebrow">Awaiting claim parameters</span>
-              <h2>Your real-time risk readout will appear here</h2>
-              <p>Select a quick preset above or fill in claim fields to evaluate denial probability and SHAP root causes.</p>
-              <div className="empty-rule"><span /><span /><span /></div>
+            <div className="p-12 text-center text-[#7C8A9C]">
+              <Target size={32} className="mx-auto mb-3 text-[#5B8CBF]/40" />
+              <p className="text-[13px]">Configure claim parameters and click "Evaluate Denial Risk" to run inference.</p>
             </div>
           )}
         </section>
       </div>
-    </div>
-  );
-}
-
-function Claims({ denials, onOpenClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void }) {
-  const [status, setStatus] = useState("all");
-  const [query, setQuery] = useState("");
-  const claims = denials.filter((claim) => (status === "all" || claim.status === status) && (!query || `${claim.id} ${claim.payer} ${claim.patientRef}`.toLowerCase().includes(query.toLowerCase())));
-
-  return (
-    <div className="page-content">
-      <SectionHeading
-        eyebrow="All submissions / 2026"
-        title="Claims log"
-        description="The full claim history across statuses, payers, and departments."
-        action={
-          <Button
-            icon={Download}
-            variant="secondary"
-            onClick={() => {
-              toast.success("Claims export ready", { description: `Exported ${claims.length} claims records.` });
-            }}
-          >
-            Export log
-          </Button>
-        }
-      />
-      <div className="claims-summary">
-        <div><span>Total claims</span><strong>1,284</strong></div>
-        <div><span>Paid</span><strong className="text-green">1,073</strong></div>
-        <div><span>Pending</span><strong className="text-gold">103</strong></div>
-        <div><span>Denied</span><strong className="text-coral">108</strong></div>
-      </div>
-      <section className="panel table-panel claims-panel">
-        <div className="table-toolbar">
-          <div className="table-search">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search claim ID, payer, patient ref..." />
-          </div>
-          <select className="compact-select" value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="all">All statuses</option>
-            <option value="denied">Denied</option>
-            <option value="appealed">Appealed</option>
-            <option value="pending">Pending</option>
-            <option value="paid">Paid</option>
-          </select>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table claims-table">
-            <thead>
-              <tr>
-                <th>Claim ID</th>
-                <th>Patient ref</th>
-                <th>Payer</th>
-                <th>Submitted</th>
-                <th>Amount</th>
-                <th>Denial code</th>
-                <th>Status</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map((claim) => (
-                <tr className="table-row" key={claim.id} onClick={() => onOpenClaim(claim.id)}>
-                  <td><strong>{claim.id}</strong></td>
-                  <td className="subtle">{claim.patientRef}</td>
-                  <td>{claim.payer}</td>
-                  <td className="tabular subtle">Aug {String(29 - (claim.agingDays % 20)).padStart(2, "0")}, 2026</td>
-                  <td className="tabular amount">{money(claim.billedAmount)}</td>
-                  <td><span className="code-pill">{claim.carcCode}</span><small className="subtle code-desc">{claim.carcDescription}</small></td>
-                  <td><StatusBadge status={claim.status} /></td>
-                  <td><ChevronRight size={15} color={COLORS.muted} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
   );
 }
@@ -1019,12 +827,30 @@ function ClaimDetail({
   onBack: () => void;
   onUpdateStatus: (id: string, newStatus: ClaimStatus) => void;
 }) {
-  const baseClaim = denials.find((item) => item.id === claimId) ?? denials[0];
+  const baseClaim = denials.find((item) => item.id === claimId) || {
+    id: claimId,
+    patientRef: "PT-•••-7724",
+    payer: "UnitedHealthcare",
+    cptCodes: ["27447"],
+    billedAmount: 18450,
+    status: "denied" as ClaimStatus,
+    carcCode: "CO-16",
+    carcDescription: "Missing required clinical documentation",
+    rarcCode: "N290",
+    groupCode: "CO" as const,
+    agingDays: 1,
+    deadline: "30 days",
+    deadlineDays: 30,
+    assignedTo: getCurrentUser().name || "Maya Alvarez",
+    avatar: "MA",
+    department: "Orthopedics",
+  };
+
   const [claim, setClaim] = useState<Denial>(baseClaim);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; date: string }[]>([]);
   const [notes, setNotes] = useState<string[]>([
-    "Reviewing documentation against the payer’s medical necessity policy. Requesting the operative note from Cardiology before Level 1 submission.",
+    "Reviewing documentation against the payer’s medical necessity policy.",
   ]);
   const [noteInput, setNoteInput] = useState("");
   const [showAddNote, setShowAddNote] = useState(false);
@@ -1077,22 +903,22 @@ function ClaimDetail({
           <p>{claim.patientRef} <span>·</span> {claim.payer} <span>·</span> submitted Aug 22, 2026</p>
         </div>
         <div className="detail-actions">
-          <Button variant="secondary" icon={MoreHorizontal} onClick={() => toast.info("Audit log and history exported")}>More</Button>
           <Button
             variant="secondary"
             icon={FileCheck2}
             onClick={() => {
               onUpdateStatus(claim.id, "appealed");
-              toast.success("Appeal started", { description: "Claim moved to appealed status and Level 1 draft opened." });
+              toast.success("Appeal started", { description: "Claim moved to appealed status and draft opened." });
             }}
           >
             Start appeal
           </Button>
           <Button
             icon={CheckCircle2}
-            onClick={() => {
+            onClick={async () => {
+              await submitClaimOutcome(claim.id, "paid");
               onUpdateStatus(claim.id, "paid");
-              toast.success("Claim marked paid", { description: "Revenue credited to department ledger." });
+              toast.success("Claim marked paid", { description: "Adjudication outcome recorded." });
             }}
           >
             Mark paid
@@ -1119,25 +945,16 @@ function ClaimDetail({
                 <strong>{claim.carcDescription}</strong>
                 <p>RARC {claim.rarcCode} · The payer indicates the service was not supported under the submitted documentation or coverage policy.</p>
               </div>
-              <button className="icon-button" onClick={() => toast.info("CARC reference", { description: "Code detail copied to clipboard." })}>
-                <HelpCircle size={16} />
-              </button>
             </div>
           </section>
 
           <section className="panel timeline-panel">
             <div className="panel-header">
               <div><span className="eyebrow">Lifecycle</span><h2>Claim timeline</h2></div>
-              <span className="subtle">Last updated 2h ago</span>
             </div>
             <div className="timeline">
               <div className="timeline-item complete"><div className="timeline-node"><Check size={13} /></div><div><strong>Submitted</strong><span>Aug 22, 2026 · 09:14 AM</span></div></div>
-              <div className="timeline-item complete"><div className="timeline-node"><Check size={13} /></div><div><strong>Processed</strong><span>Aug 25, 2026 · 03:42 PM</span></div></div>
-              <div className="timeline-item current"><div className="timeline-node"><AlertCircle size={13} /></div><div><strong>Denied · {claim.carcCode}</strong><span>Aug 26, 2026 · {claim.carcDescription}</span></div></div>
-              <div className={`timeline-item ${claim.status === "appealed" ? "complete" : ""}`}>
-                <div className="timeline-node">{claim.status === "appealed" ? <Check size={13} /> : null}</div>
-                <div><strong>Appeal</strong><span>{claim.status === "appealed" ? "Level 1 Appeal in review" : `Not started · deadline ${claim.deadline}`}</span></div>
-              </div>
+              <div className="timeline-item current"><div className="timeline-node"><AlertCircle size={13} /></div><div><strong>Evaluated · {claim.carcCode}</strong><span>{claim.carcDescription}</span></div></div>
               {uploadedFiles.map((doc, idx) => (
                 <div className="timeline-item complete" key={idx}>
                   <div className="timeline-node"><Check size={13} /></div>
@@ -1187,10 +1004,7 @@ function ClaimDetail({
 
         <aside className="detail-side">
           <section className="panel owner-panel">
-            <div className="panel-header">
-              <span className="eyebrow">Ownership</span>
-              <button className="icon-button"><MoreHorizontal size={16} /></button>
-            </div>
+            <div className="panel-header"><span className="eyebrow">Ownership</span></div>
             <div className="owner-large">
               <Avatar initials={claim.avatar} tone="blue" size="lg" />
               <div>
@@ -1200,9 +1014,6 @@ function ClaimDetail({
             </div>
             <div className="owner-line"><span>Department</span><strong>{claim.department}</strong></div>
             <div className="owner-line"><span>Priority</span><strong className="text-coral">High · 3d to deadline</strong></div>
-            <button className="assign-button" onClick={() => toast.success("Claim assigned to Priya Shah")}>
-              Reassign claim <ChevronDown size={14} />
-            </button>
           </section>
 
           <section className="panel details-panel">
@@ -1210,9 +1021,7 @@ function ClaimDetail({
             <div className="detail-list">
               <div><span>CPT / HCPCS</span><strong>{claim.cptCodes.join(" · ")}</strong></div>
               <div><span>Billed amount</span><strong>{money(claim.billedAmount)}</strong></div>
-              <div><span>Allowed amount</span><strong>$0.00</strong></div>
-              <div><span>Place of service</span><strong>22 · Outpatient hospital</strong></div>
-              <div><span>Rendering provider</span><strong>Dr. Elena Rodriguez</strong></div>
+              <div><span>Place of service</span><strong>11 · Office / Outpatient</strong></div>
             </div>
           </section>
 
@@ -1221,7 +1030,7 @@ function ClaimDetail({
             <div>
               <span className="eyebrow">Next best action</span>
               <strong>{uploadedFiles.length > 0 ? "Clinical evidence attached" : "Secure medical necessity documentation"}</strong>
-              <p>{uploadedFiles.length > 0 ? `Attached ${uploadedFiles[0].name}. Claim is ready for expedited submission.` : `Upload the operative note before the appeal deadline to protect ${money(claim.billedAmount)}.`}</p>
+              <p>{uploadedFiles.length > 0 ? `Attached ${uploadedFiles[0].name}. Claim is ready for submission.` : `Upload the operative note to protect ${money(claim.billedAmount)}.`}</p>
               
               <input
                 type="file"
@@ -1243,28 +1052,83 @@ function ClaimDetail({
   );
 }
 
-function Appeals({ appeals, onAddAppeal }: { appeals: Appeal[]; onAddAppeal: () => void }) {
-  const columns: { key: Appeal["status"]; label: string; note: string }[] = [
+function Appeals({
+  appeals,
+  denials,
+  onRefresh,
+}: {
+  appeals: AppealItem[];
+  denials: Denial[];
+  onRefresh: () => void;
+}) {
+  const [showModal, setShowModal] = useState(false);
+  const [selectedClaimId, setSelectedClaimId] = useState(denials[0]?.id || "");
+  const [appealLevel, setAppealLevel] = useState<"Level 1" | "Level 2">("Level 1");
+  const [claimDocs, setClaimDocs] = useState<any[]>([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (selectedClaimId) {
+      fetchClaimDocuments(selectedClaimId).then(setClaimDocs);
+      setSelectedDocIds([]);
+    }
+  }, [selectedClaimId]);
+
+  const handleCreateAppeal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClaimId) {
+      toast.error("Please select a claim to appeal");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await createAppeal({
+        claim_id: selectedClaimId,
+        appeal_level: appealLevel,
+        attached_document_ids: selectedDocIds,
+        notes,
+      });
+      toast.success("Appeal initiated", {
+        description: `${appealLevel} appeal created for claim ${selectedClaimId}.`,
+      });
+      setShowModal(false);
+      setNotes("");
+      onRefresh();
+    } catch (err: any) {
+      toast.error("Failed to create appeal", { description: err.message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStatusChange = async (appealId: string, newStatus: "drafting" | "submitted" | "payer_review" | "resolved") => {
+    try {
+      await updateAppealStatus(appealId, newStatus);
+      toast.success(`Appeal updated to ${newStatus}`);
+      onRefresh();
+    } catch (err: any) {
+      toast.error("Status update failed", { description: err.message });
+    }
+  };
+
+  const columns: { key: AppealItem["status"]; label: string; note: string }[] = [
     { key: "drafting", label: "Drafting", note: "Needs analyst action" },
     { key: "submitted", label: "Submitted", note: "With payer" },
-    { key: "awaiting_response", label: "Awaiting response", note: "Watch the clock" },
-    { key: "won", label: "Resolved", note: "Closed this cycle" },
+    { key: "payer_review", label: "Payer Review", note: "Watch the clock" },
+    { key: "resolved", label: "Resolved", note: "Closed this cycle" },
   ];
 
   return (
     <div className="page-content">
       <SectionHeading
-        eyebrow="Appeal operations / 12 in flight"
+        eyebrow="Appeal operations"
         title="Appeals pipeline"
-        description="Keep every submission moving before its payer SLA expires."
-        action={<Button icon={Plus} onClick={onAddAppeal}>New appeal</Button>}
+        description="Track and progress clinical appeals with real attached documentation."
+        action={<Button icon={Plus} onClick={() => setShowModal(true)}>New appeal</Button>}
       />
-      <div className="appeal-summary">
-        <div><strong>{appeals.length}</strong><span>in flight</span></div>
-        <div><strong className="text-coral">3</strong><span>due in 7 days</span></div>
-        <div><strong className="text-violet">71.8%</strong><span>win rate YTD</span></div>
-        <div><strong>$84.2k</strong><span>recoverable value</span></div>
-      </div>
+
       <div className="kanban">
         {columns.map((column) => {
           const items = appeals.filter((appeal) => appeal.status === column.key);
@@ -1279,32 +1143,30 @@ function Appeals({ appeals, onAddAppeal }: { appeals: Appeal[]; onAddAppeal: () 
               </div>
               <div className="kanban-cards">
                 {items.map((appeal) => (
-                  <button
-                    className="appeal-card"
-                    key={appeal.id}
-                    onClick={() => toast.info(`${appeal.id} selected`, { description: "Open the linked claim to review the full record." })}
-                  >
+                  <div className="appeal-card" key={appeal.id}>
                     <div className="appeal-card-top">
                       <span className="appeal-id">{appeal.id}</span>
-                      <span className={`level-pill level-${appeal.level}`}>L{appeal.level}</span>
+                      <span className="level-pill level-1">{appeal.appeal_level}</span>
                     </div>
-                    <strong>{appeal.claimId}</strong>
+                    <strong>{appeal.claim_id}</strong>
                     <span className="appeal-payer">{appeal.payer}</span>
                     <div className="appeal-card-meta">
-                      <span className={appeal.daysToDeadline <= 6 ? "text-coral" : appeal.daysToDeadline <= 14 ? "text-gold" : "text-green"}>
-                        <Clock3 size={13} />
-                        {appeal.daysToDeadline < 0 ? `${Math.abs(appeal.daysToDeadline)}d past due` : `${appeal.daysToDeadline}d to deadline`}
-                      </span>
-                      <span><Paperclip size={13} />{appeal.attachments}</span>
+                      <span><Paperclip size={13} /> {appeal.attached_document_ids?.length || 0} docs attached</span>
                     </div>
-                    <div className="appeal-card-footer">
-                      <span className="mini-status">
-                        <span className={`status-dot ${appeal.status === "won" ? "bg-[#5FAE93]" : appeal.daysToDeadline <= 6 ? "bg-[#C77B7B]" : "bg-[#C9A24B]"}`} />
-                        {appeal.notes}
-                      </span>
-                      <ChevronRight size={14} color={COLORS.muted} />
+                    {appeal.notes && <p className="mt-2 text-[11px] text-[#7C8A9C] italic">"{appeal.notes}"</p>}
+                    <div className="mt-3 flex gap-1 pt-2 border-t border-[#EEF2F6]">
+                      {column.key !== "submitted" && (
+                        <button onClick={() => handleStatusChange(appeal.id, "submitted")} className="text-[10px] font-bold text-[#5B8CBF] hover:underline">
+                          Mark Submitted →
+                        </button>
+                      )}
+                      {column.key === "submitted" && (
+                        <button onClick={() => handleStatusChange(appeal.id, "resolved")} className="text-[10px] font-bold text-[#5FAE93] hover:underline">
+                          Mark Resolved ✓
+                        </button>
+                      )}
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
               {items.length === 0 && (
@@ -1313,6 +1175,131 @@ function Appeals({ appeals, onAddAppeal }: { appeals: Appeal[]; onAddAppeal: () 
             </section>
           );
         })}
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/80 bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#EEF2F6] pb-3">
+              <h3 className="font-serif text-[20px] text-[#1E2F4D]">Initiate Clinical Appeal</h3>
+              <button onClick={() => setShowModal(false)} className="text-[#7C8A9C] hover:text-[#1E2F4D]"><X size={18} /></button>
+            </div>
+            <form onSubmit={handleCreateAppeal} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Select Claim</label>
+                <select
+                  value={selectedClaimId}
+                  onChange={(e) => setSelectedClaimId(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-[#D9E0E8] bg-[#FBFAF8] p-2.5 text-[13px] text-[#1E2F4D] outline-none focus:border-[#5B8CBF]"
+                  required
+                >
+                  {denials.length === 0 && <option value="">No claims available — score a claim first</option>}
+                  {denials.map((d) => (
+                    <option key={d.id} value={d.id}>{d.id} — {d.payer} ({money(d.billedAmount)})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Appeal Level</label>
+                <select
+                  value={appealLevel}
+                  onChange={(e) => setAppealLevel(e.target.value as any)}
+                  className="mt-1 w-full rounded-xl border border-[#D9E0E8] bg-[#FBFAF8] p-2.5 text-[13px] text-[#1E2F4D] outline-none focus:border-[#5B8CBF]"
+                >
+                  <option value="Level 1">Level 1 — Reconsideration with Payer</option>
+                  <option value="Level 2">Level 2 — External Independent Medical Review</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Attach Uploaded Documents</label>
+                {claimDocs.length === 0 ? (
+                  <p className="mt-1 text-[11px] text-[#7C8A9C]">No documents uploaded for this claim yet. You can upload chart notes on the claim details page.</p>
+                ) : (
+                  <div className="mt-2 space-y-2 max-h-32 overflow-y-auto rounded-xl border border-[#D9E0E8] p-2 bg-[#FBFAF8]">
+                    {claimDocs.map((doc) => (
+                      <label key={doc.id} className="flex items-center gap-2 text-[12px] text-[#1E2F4D] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedDocIds.includes(doc.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedDocIds([...selectedDocIds, doc.id]);
+                            else setSelectedDocIds(selectedDocIds.filter(id => id !== doc.id));
+                          }}
+                        />
+                        <span>{doc.document_title}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Analyst Rationale / Notes</label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Medical necessity justification or policy citations..."
+                  className="mt-1 w-full rounded-xl border border-[#D9E0E8] bg-[#FBFAF8] p-2.5 text-[13px] text-[#1E2F4D] outline-none focus:border-[#5B8CBF]"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[#EEF2F6]">
+                <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+                <Button type="submit" icon={FileCheck2} className={submitting ? "opacity-75" : ""}>
+                  {submitting ? "Submitting..." : "Create Appeal Record"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClaimsLogView({ denials, onOpenClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void }) {
+  return (
+    <div className="page-content">
+      <SectionHeading
+        eyebrow="Audit trail"
+        title="Claims log"
+        description="Immutable audit history of all claims scored, outcomes submitted, and predictions executed."
+      />
+      <div className="table-wrap panel mt-4">
+        {denials.length === 0 ? (
+          <div className="p-12 text-center text-[#7C8A9C]">
+            <FileText size={32} className="mx-auto mb-3 text-[#5B8CBF]/40" />
+            <p className="text-[13px]">No claim records logged yet.</p>
+          </div>
+        ) : (
+          <table className="claim-table">
+            <thead>
+              <tr>
+                <th>Claim ID</th>
+                <th>Payer</th>
+                <th>Procedure Code</th>
+                <th className="text-right">Billed Amount</th>
+                <th>CARC Flag</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {denials.map((d) => (
+                <tr key={d.id} className="clickable-row" onClick={() => onOpenClaim(d.id)}>
+                  <td className="font-mono font-bold text-[#1E2F4D]">{d.id}</td>
+                  <td>{d.payer}</td>
+                  <td>{d.cptCodes.join(", ")}</td>
+                  <td className="text-right font-mono font-bold">{money(d.billedAmount)}</td>
+                  <td><span className="carc-code-tag">{d.carcCode}</span></td>
+                  <td><StatusBadge status={d.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -1329,77 +1316,28 @@ function Payers() {
   return (
     <div className="page-content">
       <SectionHeading
-        eyebrow="Reference library / 5 payers"
+        eyebrow="Reference library / 5 major payers"
         title="Payer rules"
-        description="Timely filing, authorization, and appeal guidance for the payers your team works most."
-        action={
-          <Button variant="secondary" icon={Plus} onClick={() => toast.info("Payer rule request", { description: "Rule submission forwarded to Lead RCM specialist." })}>
-            Request payer
-          </Button>
-        }
+        description="Timely filing, authorization, and appeal guidance for active health plans."
       />
-      <div className="library-callout">
-        <div className="callout-icon blue-bg"><Library size={17} /></div>
-        <div>
-          <strong>Rules last verified Aug 28, 2026</strong>
-          <p>Deadlines are payer-specific. Always confirm the member plan and state contract before submitting an appeal.</p>
-        </div>
-        <button className="text-button" onClick={() => toast.info("Verification log opened", { description: "All 5 major payers audited and verified for Q3 2026." })}>
-          View verification log <ArrowRight size={13} />
-        </button>
-      </div>
-      <section className="panel table-panel payer-panel">
-        <div className="table-toolbar">
-          <div><span className="eyebrow">Coverage reference</span><h2>Filing & appeal requirements</h2></div>
-          <div className="table-search compact">
-            <Search size={15} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payers..." />
+      <div className="grid gap-4 mt-6 sm:grid-cols-2 lg:grid-cols-3">
+        {filteredPayers.map((p) => (
+          <div key={p.name} className="panel p-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <Avatar initials={p.initials} tone="blue" size="md" />
+              <div>
+                <strong className="text-[15px] text-[#1E2F4D]">{p.name}</strong>
+                <div className="text-[11px] text-[#7C8A9C]">Filing limit: {p.filing}</div>
+              </div>
+            </div>
+            <div className="text-[12px] text-[#48586B]">
+              <strong>Prior Auth:</strong> <p>{p.auth}</p>
+            </div>
+            <div className="text-[12px] text-[#48586B]">
+              <strong>Appeal Window:</strong> {p.appeal} ({p.method})
+            </div>
           </div>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table payer-table">
-            <thead>
-              <tr>
-                <th>Payer</th>
-                <th>Timely filing window</th>
-                <th>Prior authorization</th>
-                <th>Appeal deadline</th>
-                <th>Submission method</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPayers.map((payer) => (
-                <tr className="table-row" key={payer.name}>
-                  <td>
-                    <div className="payer-name">
-                      <span className="payer-mark large" style={{ background: `${payer.color}18`, color: payer.color }}>{payer.initials}</span>
-                      <strong>{payer.name}</strong>
-                    </div>
-                  </td>
-                  <td><span className="tabular">{payer.filing}</span></td>
-                  <td><span className="rule-summary">{payer.auth}</span></td>
-                  <td><span className="tabular text-gold">{payer.appeal}</span></td>
-                  <td><span className="method-pill"><Send size={13} />{payer.method}</span></td>
-                  <td><button className="icon-button"><ChevronRight size={15} /></button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      <div className="code-reference panel">
-        <div>
-          <span className="eyebrow">CARC quick reference</span>
-          <h2>Common denial codes</h2>
-          <p>Every code in the worklist links back to a plain-language definition.</p>
-        </div>
-        <div className="code-reference-list">
-          <span><strong>CO-50</strong>Medical necessity</span>
-          <span><strong>CO-197</strong>Prior authorization</span>
-          <span><strong>CO-29</strong>Timely filing</span>
-          <span><strong>CO-16</strong>Missing information</span>
-        </div>
+        ))}
       </div>
     </div>
   );
@@ -1409,159 +1347,127 @@ function Analytics() {
   return (
     <div className="page-content">
       <SectionHeading
-        eyebrow="Root-cause intelligence / YTD"
+        eyebrow="Intelligence & Reporting"
         title="Denial analytics"
-        description="Find the patterns behind lost revenue and focus your next intervention."
-        action={<Button variant="secondary" icon={Download} onClick={() => toast.success("Analytics report exported")}>Export report</Button>}
+        description="Payer performance benchmarks, avoidable denial distributions, and recovery metrics."
       />
-      <div className="analytics-kpis">
-        <div className="analytics-stat">
-          <span>Preventable denial rate</span>
-          <strong>3.1%</strong>
-          <small className="text-green"><TrendingDown size={13} />0.8 pts vs. last quarter</small>
-        </div>
-        <div className="analytics-stat">
-          <span>Top root cause</span>
-          <strong>CO-197</strong>
-          <small>Prior authorization</small>
-        </div>
-        <div className="analytics-stat">
-          <span>Revenue recovered</span>
-          <strong>$486.2k</strong>
-          <small className="text-green"><TrendingUp size={13} />14.2% vs. last year</small>
-        </div>
-        <div className="analytics-stat">
-          <span>Highest risk service line</span>
-          <strong>Orthopedics</strong>
-          <small>8.7% denial rate</small>
-        </div>
-      </div>
-      <div className="analytics-grid">
-        <section className="panel analytics-chart">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Payer comparison</span>
-              <h2>Denial rate vs. recovery</h2>
-            </div>
-            <div className="legend">
-              <span><i className="legend-dot blue-dot" />Denial rate</span>
-              <span><i className="legend-dot green-dot" />Recovered</span>
-            </div>
-          </div>
-          <div className="analytics-chart-wrap">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analyticsData} margin={{ top: 10, right: 10, left: -16, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="#DDE4EC" strokeDasharray="3 4" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: COLORS.muted, fontSize: 11 }} />
-                <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: COLORS.muted, fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
-                <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: COLORS.muted, fontSize: 11 }} tickFormatter={(value) => `${value}%`} />
-                <Tooltip contentStyle={{ border: "1px solid #DDE4EC", borderRadius: 12, background: "#FBFAF8", fontSize: 12 }} />
-                <Bar yAxisId="left" dataKey="denial" fill="#5B8CBF" radius={[4, 4, 0, 0]} barSize={18} name="Denial rate" />
-                <Bar yAxisId="right" dataKey="recovered" fill="#5FAE93" radius={[4, 4, 0, 0]} barSize={18} name="Recovered" />
-              </BarChart>
-            </ResponsiveContainer>
+      <div className="grid gap-6 mt-6 lg:grid-cols-2">
+        <section className="panel p-6">
+          <h3 className="font-serif text-[18px] text-[#1E2F4D]">Historical Denial Rates by Payer</h3>
+          <p className="text-[12px] text-[#7C8A9C] mt-1">Based on benchmark priors from 120k claim records</p>
+          <div className="mt-4 space-y-3">
+            {[
+              { payer: "UnitedHealthcare", rate: "18.4%", risk: "High", color: "#C77B7B" },
+              { payer: "Aetna", rate: "14.2%", risk: "Moderate", color: "#C9A24B" },
+              { payer: "Cigna", rate: "12.8%", risk: "Moderate", color: "#C9A24B" },
+              { payer: "Humana", rate: "11.5%", risk: "Low", color: "#5FAE93" },
+              { payer: "Medicare Part B", rate: "8.9%", risk: "Low", color: "#5FAE93" },
+            ].map(item => (
+              <div key={item.payer} className="flex items-center justify-between border-b border-[#EEF2F6] pb-2 text-[13px]">
+                <span className="font-medium text-[#1E2F4D]">{item.payer}</span>
+                <span className="font-mono font-bold" style={{ color: item.color }}>{item.rate} ({item.risk})</span>
+              </div>
+            ))}
           </div>
         </section>
 
-        <section className="panel root-cause-panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Avoidable revenue</span>
-              <h2>Top root causes</h2>
-            </div>
-            <span className="subtle">$72.4k open</span>
-          </div>
-          <div className="root-cause-list">
+        <section className="panel p-6">
+          <h3 className="font-serif text-[18px] text-[#1E2F4D]">Top Preventable Reason Codes (CARC)</h3>
+          <p className="text-[12px] text-[#7C8A9C] mt-1">Target areas for pre-submission clinical intervention</p>
+          <div className="mt-4 space-y-3">
             {[
-              { code: "CO-197", label: "Prior authorization", value: "$42.8k", pct: 59, color: COLORS.coral },
-              { code: "CO-50", label: "Medical necessity", value: "$17.6k", pct: 24, color: COLORS.gold },
-              { code: "CO-16", label: "Missing information", value: "$8.1k", pct: 11, color: COLORS.blue },
-              { code: "CO-29", label: "Timely filing", value: "$3.9k", pct: 6, color: COLORS.violet },
-            ].map((item) => (
-              <div className="root-cause" key={item.code}>
+              { code: "CO-197", desc: "Prior Authorization Missing", pct: "38%" },
+              { code: "CO-16", desc: "Missing Clinical Documentation", pct: "27%" },
+              { code: "CO-29", desc: "Timely Filing Limit Exceeded", pct: "16%" },
+              { code: "CO-27", desc: "Coverage Inactive on Date of Service", pct: "11%" },
+              { code: "CO-50", desc: "Medical Necessity Deviation", pct: "8%" },
+            ].map(item => (
+              <div key={item.code} className="flex items-center justify-between border-b border-[#EEF2F6] pb-2 text-[13px]">
                 <div>
-                  <span className="code-pill">{item.code}</span>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
+                  <span className="font-mono font-bold text-[#1E2F4D]">{item.code}</span>
+                  <span className="ml-2 text-[12px] text-[#7C8A9C]">{item.desc}</span>
                 </div>
-                <div className="bar-track">
-                  <span style={{ width: `${item.pct}%`, background: item.color }} />
-                </div>
+                <span className="font-mono font-bold text-[#5B8CBF]">{item.pct}</span>
               </div>
             ))}
           </div>
         </section>
       </div>
-
-      <section className="panel service-line-panel">
-        <div className="panel-header">
-          <div><span className="eyebrow">Operational focus</span><h2>Denial rate by service line</h2></div>
-          <button className="text-button" onClick={() => toast.info("All 14 clinical service lines loaded")}>View all departments <ArrowRight size={13} /></button>
-        </div>
-        <div className="service-grid">
-          {[
-            { name: "Orthopedics", rate: "8.7%", trend: "+1.2 pts", tone: "coral" },
-            { name: "Cardiology", rate: "7.4%", trend: "−0.6 pts", tone: "gold" },
-            { name: "Rehab Services", rate: "6.9%", trend: "−1.8 pts", tone: "blue" },
-            { name: "Primary Care", rate: "4.2%", trend: "−0.4 pts", tone: "green" },
-          ].map((item) => (
-            <div className="service-card" key={item.name}>
-              <div><span className={`service-signal ${item.tone}`} /><strong>{item.name}</strong></div>
-              <b>{item.rate}</b>
-              <small className={item.tone === "coral" ? "text-coral" : "text-green"}>{item.trend} MoM</small>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
 
-function Settings() {
-  const [activeTab, setActiveTab] = useState<"team" | "notifications" | "workflow" | "security">("team");
-  const [notifications, setNotifications] = useState({
-    deadlines: true,
-    highRisk: true,
-    weeklyBrief: false,
+function SettingsView() {
+  const [activeTab, setActiveTab] = useState<"team" | "workflow" | "security">("team");
+  const [settings, setSettings] = useState<WorkspaceSettings>({
+    workspace_id: "ws-northstar-001",
+    auto_assign: true,
+    default_appeal_deadline_days: 30,
+    high_risk_threshold: 60,
+    email_notifications: true,
+    deadline_alerts: true,
+    weekly_digest: false,
+    updated_at: new Date().toISOString(),
   });
-  const [workflow, setWorkflow] = useState({
-    autoAssign: true,
-    priorityThreshold: "70",
-    defaultAgingLimit: "30",
+
+  const [security, setSecurity] = useState<SecuritySettings>({
+    workspace_id: "ws-northstar-001",
+    session_timeout_minutes: 60,
+    audit_log_retention_days: 2555,
+    enforce_ip_allowlist: false,
+    updated_at: new Date().toISOString(),
   });
+
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchWorkspaceSettings().then(setSettings);
+    fetchSecuritySettings().then(setSecurity);
+  }, []);
+
+  const handleSaveWorkflow = async () => {
+    setSaving(true);
+    try {
+      const updated = await saveWorkspaceSettings(settings);
+      setSettings(updated);
+      toast.success("Workflow settings saved", { description: "Triage rules updated across workspace." });
+    } catch (err: any) {
+      toast.error("Failed to save settings", { description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveSecurity = async () => {
+    setSaving(true);
+    try {
+      const updated = await saveSecuritySettings(security);
+      setSecurity(updated);
+      toast.success("Security settings saved");
+    } catch (err: any) {
+      toast.error("Failed to save security settings", { description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="page-content settings-page">
       <SectionHeading
         eyebrow="Workspace administration"
         title="Settings"
-        description="Manage your team, workflow defaults, and notification preferences."
+        description="Manage your team invites, persisted workflow rules, and compliance security settings."
       />
       <div className="settings-layout">
         <aside className="settings-nav">
-          <button
-            className={`settings-nav-item ${activeTab === "team" ? "active" : ""}`}
-            onClick={() => setActiveTab("team")}
-          >
-            <UsersRound size={16} />Team & roles
+          <button className={`settings-nav-item ${activeTab === "team" ? "active" : ""}`} onClick={() => setActiveTab("team")}>
+            <UsersRound size={16} />Team & Invites
           </button>
-          <button
-            className={`settings-nav-item ${activeTab === "notifications" ? "active" : ""}`}
-            onClick={() => setActiveTab("notifications")}
-          >
-            <Bell size={16} />Notifications
+          <button className={`settings-nav-item ${activeTab === "workflow" ? "active" : ""}`} onClick={() => setActiveTab("workflow")}>
+            <SlidersHorizontal size={16} />Workflow Defaults
           </button>
-          <button
-            className={`settings-nav-item ${activeTab === "workflow" ? "active" : ""}`}
-            onClick={() => setActiveTab("workflow")}
-          >
-            <SlidersHorizontal size={16} />Workflow defaults
-          </button>
-          <button
-            className={`settings-nav-item ${activeTab === "security" ? "active" : ""}`}
-            onClick={() => setActiveTab("security")}
-          >
-            <ShieldCheck size={16} />Security & access
+          <button className={`settings-nav-item ${activeTab === "security" ? "active" : ""}`} onClick={() => setActiveTab("security")}>
+            <ShieldCheck size={16} />Security & Compliance
           </button>
         </aside>
 
@@ -1569,55 +1475,43 @@ function Settings() {
           {activeTab === "team" && (
             <section className="panel settings-panel">
               <div className="panel-header">
-                <div><span className="eyebrow">Northstar Health System</span><h2>Team & roles</h2></div>
+                <div><span className="eyebrow">Team Management</span><h2>Workspace Invites</h2></div>
                 <Button
                   icon={Plus}
                   onClick={async () => {
-                    const res = await generateWorkspaceInvite("Analyst");
-                    toast.success(`Invite code generated: ${res.invite_code}`, {
-                      description: "Share this 16-character code with teammates to auto-join this workspace with Analyst permissions.",
-                      duration: 8000,
-                    });
+                    try {
+                      const res = await generateWorkspaceInvite("Analyst");
+                      toast.success(`Invite Code: ${res.invite_code}`, {
+                        description: "Valid for 7 days. Share this code with colleagues to auto-join this workspace.",
+                        duration: 10000,
+                      });
+                    } catch (err: any) {
+                      toast.error("Invite generation failed", { description: err.message });
+                    }
                   }}
                 >
-                  Invite member
+                  Generate Invite Code
                 </Button>
               </div>
-              <p className="panel-description">Roles control which claim actions and financial records each teammate can access.</p>
+              <p className="panel-description">
+                Invite team members with role-based access. New users enter this code at <code>/create-account</code> to automatically join your organization.
+              </p>
               <div className="team-list">
-                {[
-                  { name: "Maya Alvarez", email: "malvarez@northstar.health", role: "Denial analyst", badge: "MA", tone: "blue" },
-                  { name: "Jordan Lee", email: "jlee@northstar.health", role: "Biller", badge: "JL", tone: "violet" },
-                  { name: "Priya Shah", email: "pshah@northstar.health", role: "Denial analyst", badge: "PS", tone: "gold" },
-                  { name: "Amelia Chen", email: "achen@northstar.health", role: "Admin", badge: "AC", tone: "green" },
-                ].map((member) => (
-                  <div className="team-row" key={member.email}>
-                    <Avatar initials={member.badge} tone={member.tone as "blue" | "violet" | "gold" | "green"} size="md" />
-                    <div className="team-member"><strong>{member.name}</strong><span>{member.email}</span></div>
-                    <span className="role-pill">{member.role}</span>
-                    <button className="icon-button" onClick={() => toast.info(`Permissions for ${member.name}`)}><MoreHorizontal size={16} /></button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {activeTab === "notifications" && (
-            <section className="panel settings-panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">Personal preferences</span><h2>Notifications</h2></div>
-              </div>
-              <div className="preference-row cursor-pointer" onClick={() => setNotifications({ ...notifications, deadlines: !notifications.deadlines })}>
-                <div><strong>Appeal deadlines</strong><span>Notify me 14, 7, and 2 days before a deadline.</span></div>
-                <div className={`toggle ${notifications.deadlines ? "on" : ""}`}><span /></div>
-              </div>
-              <div className="preference-row cursor-pointer" onClick={() => setNotifications({ ...notifications, highRisk: !notifications.highRisk })}>
-                <div><strong>High-risk predictions</strong><span>Send a digest when a predicted risk exceeds 70.</span></div>
-                <div className={`toggle ${notifications.highRisk ? "on" : ""}`}><span /></div>
-              </div>
-              <div className="preference-row cursor-pointer" onClick={() => setNotifications({ ...notifications, weeklyBrief: !notifications.weeklyBrief })}>
-                <div><strong>Weekly revenue integrity brief</strong><span>Monday summary of preventable denials and recovery.</span></div>
-                <div className={`toggle ${notifications.weeklyBrief ? "on" : ""}`}><span /></div>
+                <div className="team-row">
+                  <Avatar initials="AA" tone="blue" size="md" />
+                  <div className="team-member"><strong>Alice Admin</strong><span>admin@denialguard.com</span></div>
+                  <span className="role-pill">Admin</span>
+                </div>
+                <div className="team-row">
+                  <Avatar initials="MA" tone="violet" size="md" />
+                  <div className="team-member"><strong>Maya Alvarez</strong><span>malvarez@northstar.health</span></div>
+                  <span className="role-pill">Analyst</span>
+                </div>
+                <div className="team-row">
+                  <Avatar initials="JL" tone="gold" size="md" />
+                  <div className="team-member"><strong>Jordan Lee</strong><span>jlee@northstar.health</span></div>
+                  <span className="role-pill">Biller</span>
+                </div>
               </div>
             </section>
           )}
@@ -1625,29 +1519,32 @@ function Settings() {
           {activeTab === "workflow" && (
             <section className="panel settings-panel">
               <div className="panel-header">
-                <div><span className="eyebrow">Triage rules</span><h2>Workflow defaults</h2></div>
+                <div><span className="eyebrow">Triage Rules</span><h2>Workflow Defaults</h2></div>
+                <Button onClick={handleSaveWorkflow} className={saving ? "opacity-75" : ""}>
+                  {saving ? "Saving..." : "Save Workflow Rules"}
+                </Button>
               </div>
-              <div className="preference-row cursor-pointer" onClick={() => setWorkflow({ ...workflow, autoAssign: !workflow.autoAssign })}>
-                <div><strong>Auto-assign high urgency claims</strong><span>Automatically route claims with &le; 7 days deadline to senior analysts.</span></div>
-                <div className={`toggle ${workflow.autoAssign ? "on" : ""}`}><span /></div>
-              </div>
-              <div className="p-4 space-y-3">
-                <div className="flex items-center justify-between text-[13px]">
-                  <span>High risk scoring threshold</span>
+              <div className="p-4 space-y-4 text-[13px]">
+                <div className="preference-row cursor-pointer" onClick={() => setSettings({ ...settings, auto_assign: !settings.auto_assign })}>
+                  <div><strong>Auto-assign high urgency claims</strong><span>Automatically route claims with &le; 7 days deadline to senior analysts.</span></div>
+                  <div className={`toggle ${settings.auto_assign ? "on" : ""}`}><span /></div>
+                </div>
+                <div className="flex items-center justify-between border-t border-[#EEF2F6] pt-3">
+                  <div><strong>High-Risk Scoring Cutoff (%)</strong><p className="text-[11px] text-[#7C8A9C]">Claims scoring above this threshold generate urgent alerts</p></div>
                   <input
                     type="number"
-                    value={workflow.priorityThreshold}
-                    onChange={(e) => setWorkflow({ ...workflow, priorityThreshold: e.target.value })}
-                    className="w-20 rounded-lg border border-[#D9E0E8] bg-white px-2 py-1 text-center font-mono text-[12px]"
+                    value={settings.high_risk_threshold}
+                    onChange={(e) => setSettings({ ...settings, high_risk_threshold: Number(e.target.value) })}
+                    className="w-20 rounded-lg border border-[#D9E0E8] p-1.5 text-center font-mono text-[13px]"
                   />
                 </div>
-                <div className="flex items-center justify-between text-[13px]">
-                  <span>Aging limit warning threshold (days)</span>
+                <div className="flex items-center justify-between border-t border-[#EEF2F6] pt-3">
+                  <div><strong>Default Appeal Deadline (Days)</strong><p className="text-[11px] text-[#7C8A9C]">Standard SLA for Level 1 appeal submissions</p></div>
                   <input
                     type="number"
-                    value={workflow.defaultAgingLimit}
-                    onChange={(e) => setWorkflow({ ...workflow, defaultAgingLimit: e.target.value })}
-                    className="w-20 rounded-lg border border-[#D9E0E8] bg-white px-2 py-1 text-center font-mono text-[12px]"
+                    value={settings.default_appeal_deadline_days}
+                    onChange={(e) => setSettings({ ...settings, default_appeal_deadline_days: Number(e.target.value) })}
+                    className="w-20 rounded-lg border border-[#D9E0E8] p-1.5 text-center font-mono text-[13px]"
                   />
                 </div>
               </div>
@@ -1657,20 +1554,44 @@ function Settings() {
           {activeTab === "security" && (
             <section className="panel settings-panel">
               <div className="panel-header">
-                <div><span className="eyebrow">Compliance</span><h2>Security & Access</h2></div>
+                <div><span className="eyebrow">Compliance</span><h2>Security Settings</h2></div>
+                <Button onClick={handleSaveSecurity} className={saving ? "opacity-75" : ""}>
+                  {saving ? "Saving..." : "Save Security"}
+                </Button>
               </div>
-              <div className="p-4 space-y-4 text-[13px] text-[#48586B]">
-                <div className="flex items-center justify-between border-b border-[#DDE4EC] pb-3">
-                  <div><strong>Two-Factor Authentication (2FA)</strong><p className="text-[11px] text-[#7C8A9C]">Enforced for all workspace administrators</p></div>
-                  <span className="rounded-full bg-[#5FAE93]/15 px-2.5 py-1 text-[11px] font-semibold text-[#245C47]">Active</span>
+              <div className="p-4 space-y-4 text-[13px]">
+                <div className="flex items-center justify-between border-b border-[#EEF2F6] pb-3">
+                  <div>
+                    <strong>Two-Factor Authentication (2FA)</strong>
+                    <p className="text-[11px] text-[#7C8A9C]">Hardware Security Keys & TOTP authenticator app enforcement</p>
+                  </div>
+                  <span className="rounded-full bg-[#7C8A9C]/15 px-2.5 py-1 text-[11px] font-semibold text-[#7C8A9C]">
+                    Coming soon in Enterprise v1.2
+                  </span>
                 </div>
-                <div className="flex items-center justify-between border-b border-[#DDE4EC] pb-3">
-                  <div><strong>HIPAA De-identification</strong><p className="text-[11px] text-[#7C8A9C]">Masking patient identifiers before model scoring</p></div>
-                  <span className="rounded-full bg-[#5FAE93]/15 px-2.5 py-1 text-[11px] font-semibold text-[#245C47]">Enforced</span>
+                <div className="flex items-center justify-between border-b border-[#EEF2F6] pb-3">
+                  <div>
+                    <strong>Session Timeout (Minutes)</strong>
+                    <p className="text-[11px] text-[#7C8A9C]">Automatic logout duration for inactivity</p>
+                  </div>
+                  <input
+                    type="number"
+                    value={security.session_timeout_minutes}
+                    onChange={(e) => setSecurity({ ...security, session_timeout_minutes: Number(e.target.value) })}
+                    className="w-20 rounded-lg border border-[#D9E0E8] p-1.5 text-center font-mono text-[13px]"
+                  />
                 </div>
                 <div className="flex items-center justify-between">
-                  <div><strong>Audit Logging</strong><p className="text-[11px] text-[#7C8A9C]">365-day immutable compliance retention</p></div>
-                  <span className="rounded-full bg-[#5FAE93]/15 px-2.5 py-1 text-[11px] font-semibold text-[#245C47]">Compliant</span>
+                  <div>
+                    <strong>Audit Log Retention (Days)</strong>
+                    <p className="text-[11px] text-[#7C8A9C]">HIPAA-compliant immutable audit log preservation</p>
+                  </div>
+                  <input
+                    type="number"
+                    value={security.audit_log_retention_days}
+                    onChange={(e) => setSecurity({ ...security, audit_log_retention_days: Number(e.target.value) })}
+                    className="w-20 rounded-lg border border-[#D9E0E8] p-1.5 text-center font-mono text-[13px]"
+                  />
                 </div>
               </div>
             </section>
@@ -1681,85 +1602,41 @@ function Settings() {
   );
 }
 
-function Sidebar({
-  location,
-  onNavigate,
-  onLogout,
-}: {
-  location: string;
-  onNavigate: (path: string) => void;
-  onLogout: () => void;
-}) {
-  return (
-    <aside className="sidebar glass">
-      <div className="brand">
-        <div className="brand-mark">DG</div>
-        <div><strong>DenialGuard <em>AI</em></strong><span>RCM OPERATIONS</span></div>
-      </div>
-      <button className="workspace-switcher" onClick={() => onNavigate("/settings")}>
-        <span className="workspace-avatar"><Building2 size={16} /></span>
-        <span><strong>Northstar Health</strong><small>Revenue Integrity</small></span>
-        <ChevronDown size={14} />
-      </button>
-      <nav className="sidebar-nav">
-        {navGroups.map((group) => (
-          <div key={group.label} className="nav-group">
-            <span className="nav-label">{group.label}</span>
-            {group.items.map((item) => {
-              const active = location === item.path || (item.path === "/worklist" && location === "/") || (item.path === "/claims" && location.startsWith("/claims/"));
-              return (
-                <button key={item.path} className={`nav-item ${active ? "active" : ""}`} onClick={() => onNavigate(item.path)}>
-                  <item.icon size={17} strokeWidth={active ? 2.1 : 1.7} />
-                  <span>{item.label}</span>
-                  {item.shortcut && <kbd>{item.shortcut}</kbd>}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <div className="system-status">
-          <span className="pulse-dot green" />
-          <div><strong>Systems operational</strong><span>Last sync 2 min ago</span></div>
-          <CheckCircle2 size={15} color={COLORS.green} />
-        </div>
-        <button className="help-link" onClick={() => toast.info("Help center", { description: "DenialGuard playbook & ICD/CPT guidance is available." })}>
-          <HelpCircle size={15} />Help center
-        </button>
-
-        <div className="flex items-center justify-between border-t border-[#DDE4EC] pt-3 mt-1">
-          <div className="user-profile border-0 p-0 flex items-center gap-2">
-            <Avatar initials={getCurrentUser().name.split(" ").map(n => n[0]).join("") || "MA"} tone="blue" />
-            <div><strong>{getCurrentUser().name}</strong><span>{getCurrentUser().role}</span></div>
-          </div>
-          <button
-            onClick={onLogout}
-            title="Sign out"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#7C8A9C] hover:bg-[#FDF2F2] hover:text-[#C77B7B] transition"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 function Topbar({
   onNavigate,
   onLogout,
+  notifications,
+  onRefreshNotifications,
 }: {
   onNavigate: (path: string) => void;
   onLogout: () => void;
+  notifications: NotificationItem[];
+  onRefreshNotifications: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
   const currentUser = getCurrentUser();
   const initials = currentUser.name.split(" ").map(n => n[0]).join("") || "MA";
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  const handleMarkAllRead = async () => {
+    await markAllNotificationsRead();
+    onRefreshNotifications();
+    toast.success("All notifications marked as read");
+  };
+
+  const handleNotifClick = async (notif: NotificationItem) => {
+    await markNotificationRead(notif.id);
+    onRefreshNotifications();
+    setShowNotifPanel(false);
+    if (notif.link) {
+      onNavigate(notif.link);
+    }
+  };
 
   return (
-    <header className="topbar glass">
+    <header className="topbar glass relative">
       <button className="mobile-menu icon-button"><Menu size={19} /></button>
       <div className="breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>Revenue integrity</strong></div>
       <div className="global-search">
@@ -1778,13 +1655,53 @@ function Topbar({
         <kbd><Command size={12} />K</kbd>
       </div>
       <div className="topbar-actions relative">
-        <button
-          className="topbar-icon"
-          onClick={() => toast.info("Notifications", { description: "3 claims have appeal deadlines due within 7 days." })}
-        >
-          <Bell size={18} />
-          <span className="notification-dot" />
-        </button>
+        <div className="relative">
+          <button
+            className="topbar-icon relative"
+            onClick={() => setShowNotifPanel(!showNotifPanel)}
+            title="Notifications"
+          >
+            <Bell size={18} />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#C77B7B] text-[9px] font-bold text-white">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          {showNotifPanel && (
+            <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-white/80 bg-white p-3 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center justify-between border-b border-[#EEF2F6] pb-2">
+                <strong className="text-[13px] text-[#1E2F4D]">Notifications ({unreadCount} unread)</strong>
+                {unreadCount > 0 && (
+                  <button onClick={handleMarkAllRead} className="text-[10px] font-bold text-[#5B8CBF] hover:underline">
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              <div className="mt-2 max-h-72 overflow-y-auto space-y-2">
+                {notifications.length === 0 ? (
+                  <p className="p-4 text-center text-[11px] text-[#7C8A9C]">No notifications yet.</p>
+                ) : (
+                  notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => handleNotifClick(n)}
+                      className={`rounded-xl p-2.5 text-[12px] cursor-pointer transition ${n.is_read ? "bg-white hover:bg-[#F8FAFC]" : "bg-[#5B8CBF]/10 font-medium"}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <strong className="text-[#1E2F4D] text-[12px]">{n.title}</strong>
+                        <span className="text-[9px] text-[#7C8A9C] font-mono">{new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#48586B] leading-tight">{n.message}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="topbar-divider" />
         <div className="relative">
           <button
@@ -1822,77 +1739,127 @@ function Topbar({
   );
 }
 
-function AppShell({
+function Sidebar({
   location,
   onNavigate,
   onLogout,
-  children,
 }: {
   location: string;
   onNavigate: (path: string) => void;
   onLogout: () => void;
-  children: React.ReactNode;
 }) {
+  const currentUser = getCurrentUser();
+  const initials = currentUser.name.split(" ").map(n => n[0]).join("") || "MA";
+
   return (
-    <div className="app-shell ambient-shell">
-      <Sidebar location={location} onNavigate={onNavigate} onLogout={onLogout} />
-      <div className="app-main">
-        <Topbar onNavigate={onNavigate} onLogout={onLogout} />
-        <main className="main-surface">{children}</main>
+    <aside className="sidebar glass">
+      <div className="brand">
+        <div className="brand-mark">DG</div>
+        <div><strong>DenialGuard <em>AI</em></strong><span>RCM OPERATIONS</span></div>
       </div>
-    </div>
+      <button className="workspace-switcher" onClick={() => onNavigate("/settings")}>
+        <span className="workspace-avatar"><Building2 size={16} /></span>
+        <span><strong>Northstar Health</strong><small>Revenue Integrity</small></span>
+        <ChevronDown size={14} />
+      </button>
+      <nav className="sidebar-nav">
+        {navGroups.map((group) => (
+          <div key={group.label} className="nav-group">
+            <span className="nav-label">{group.label}</span>
+            {group.items.map((item) => {
+              const active = location === item.path || (item.path === "/worklist" && location === "/") || (item.path === "/claims" && location.startsWith("/claims/"));
+              return (
+                <button key={item.path} className={`nav-item ${active ? "active" : ""}`} onClick={() => onNavigate(item.path)}>
+                  <item.icon size={17} strokeWidth={active ? 2.1 : 1.7} />
+                  <span>{item.label}</span>
+                  {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="sidebar-bottom">
+        <div className="system-status">
+          <span className="pulse-dot green" />
+          <div><strong>Systems operational</strong><span>XGBoost & SHAP Ready</span></div>
+          <CheckCircle2 size={15} color={COLORS.green} />
+        </div>
+        <div className="flex items-center justify-between border-t border-[#DDE4EC] pt-3 mt-1">
+          <div className="user-profile border-0 p-0 flex items-center gap-2">
+            <Avatar initials={initials} tone="blue" />
+            <div><strong>{currentUser.name}</strong><span>{currentUser.role}</span></div>
+          </div>
+          <button
+            onClick={onLogout}
+            title="Sign out"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#7C8A9C] hover:bg-[#FDF2F2] hover:text-[#C77B7B] transition"
+          >
+            <LogOut size={16} />
+          </button>
+        </div>
+      </div>
+    </aside>
   );
 }
 
 export default function Home() {
   const [location, setLocation] = useLocation();
-  const [denials, setDenials] = useState<Denial[]>(INITIAL_DENIALS);
-  const [appeals, setAppeals] = useState<Appeal[]>(INITIAL_APPEALS);
+  const [denials, setDenials] = useState<Denial[]>([]);
+  const [appeals, setAppeals] = useState<AppealItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   const path = location.split("?")[0];
 
+  const loadData = async () => {
+    try {
+      const [logs, appls, notifs] = await Promise.all([
+        fetchClaimsLog(),
+        fetchAppeals(),
+        fetchNotifications(),
+      ]);
+
+      const mappedDenials: Denial[] = logs.map((row: any) => ({
+        id: row.claim_id,
+        patientRef: row.patient_id ? `PT-•••-${row.patient_id.slice(-4)}` : "PT-•••-7724",
+        payer: row.payer || "UnitedHealthcare",
+        cptCodes: [row.cpt_code || "27447"],
+        billedAmount: Number(row.charge_amount) || 18450,
+        status: (row.actual_outcome === "paid" ? "paid" : row.actual_outcome === "denied" ? "denied" : (row.predicted_risk_score && row.predicted_risk_score >= 60 ? "denied" : "pending")) as ClaimStatus,
+        carcCode: row.predicted_carc_code || "CO-16",
+        carcDescription: row.suggested_corrective_action || "Pre-submission review recommended",
+        rarcCode: "N290",
+        groupCode: "CO",
+        agingDays: row.days_to_filing_deadline ? Math.max(1, 90 - row.days_to_filing_deadline) : 1,
+        deadline: `${row.days_to_filing_deadline || 30} days`,
+        deadlineDays: row.days_to_filing_deadline || 30,
+        assignedTo: "Maya Alvarez",
+        avatar: "MA",
+        department: row.provider_specialty || "Orthopedics",
+      }));
+
+      setDenials(mappedDenials);
+      setAppeals(appls);
+      setNotifications(notifs);
+    } catch (err) {
+      console.warn("Could not load backend data:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
   const handleLogout = () => {
-    toast.success("Signed out", { description: "You have been logged out of Northstar Health workspace." });
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("user_profile");
+    toast.success("Signed out successfully");
     setLocation("/sign-in");
   };
 
-  const handleAddDenial = () => {
-    const newClaim: Denial = {
-      id: `CLM-2026-0${Math.floor(1000 + Math.random() * 9000)}`,
-      patientRef: `PT-•••-${Math.floor(1000 + Math.random() * 9000)}`,
-      payer: "UnitedHealthcare",
-      cptCodes: ["99213"],
-      billedAmount: 320,
-      status: "denied",
-      carcCode: "CO-16",
-      carcDescription: "Claim lacked required modifier or coding detail",
-      rarcCode: "N290",
-      groupCode: "CO",
-      agingDays: 4,
-      deadline: "Oct 12, 2026",
-      deadlineDays: 39,
-      assignedTo: "Maya Alvarez",
-      avatar: "MA",
-      department: "Internal Medicine",
-    };
-    setDenials([newClaim, ...denials]);
-    toast.success("New denial claim added", { description: `Claim ${newClaim.id} registered in queue.` });
-  };
-
-  const handleAddAppeal = () => {
-    const newAppeal: Appeal = {
-      id: `APL-${Math.floor(1050 + Math.random() * 100)}`,
-      claimId: `CLM-2026-08397`,
-      payer: "UnitedHealthcare",
-      level: 1,
-      status: "drafting",
-      deadline: "Sep 29, 2026",
-      daysToDeadline: 26,
-      attachments: 1,
-      notes: "Appeal letter drafted with prior authorization proof.",
-    };
-    setAppeals([newAppeal, ...appeals]);
-    toast.success("New appeal drafted", { description: `Appeal ${newAppeal.id} created in pipeline.` });
+  const handleSaveClaim = (claim: Denial) => {
+    setDenials(prev => [claim, ...prev]);
+    loadData();
   };
 
   const handleUpdateStatus = (id: string, newStatus: ClaimStatus) => {
@@ -1900,29 +1867,39 @@ export default function Home() {
   };
 
   const renderPage = () => {
-    if (path === "/dashboard") return <Dashboard onNavigate={setLocation} appeals={appeals} />;
-    if (path === "/predict") return <Predict onSaveClaim={(c) => setDenials([c, ...denials])} />;
-    if (path === "/claims") return <Claims denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} />;
+    if (path === "/dashboard") return <Dashboard onNavigate={setLocation} denials={denials} appeals={appeals} />;
+    if (path === "/predict") return <Predict onSaveClaim={handleSaveClaim} />;
+    if (path === "/claims") return <ClaimsLogView denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} />;
     if (path.startsWith("/claims/")) {
+      const targetId = path.split("/")[2];
       return (
         <ClaimDetail
-          claimId={path.split("/")[2] ?? denials[0].id}
+          claimId={targetId}
           denials={denials}
           onBack={() => setLocation("/worklist")}
           onUpdateStatus={handleUpdateStatus}
         />
       );
     }
-    if (path === "/appeals") return <Appeals appeals={appeals} onAddAppeal={handleAddAppeal} />;
+    if (path === "/appeals") return <Appeals appeals={appeals} denials={denials} onRefresh={loadData} />;
     if (path === "/payers") return <Payers />;
     if (path === "/analytics") return <Analytics />;
-    if (path === "/settings") return <Settings />;
-    return <Worklist denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} onAddDenial={handleAddDenial} />;
+    if (path === "/settings") return <SettingsView />;
+    return <Worklist denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} onScoreClaim={() => setLocation("/predict")} />;
   };
 
   return (
-    <AppShell location={path} onNavigate={setLocation} onLogout={handleLogout}>
-      {renderPage()}
-    </AppShell>
+    <div className="app-shell ambient-shell">
+      <Sidebar location={path} onNavigate={setLocation} onLogout={handleLogout} />
+      <div className="app-main">
+        <Topbar
+          onNavigate={setLocation}
+          onLogout={handleLogout}
+          notifications={notifications}
+          onRefreshNotifications={loadData}
+        />
+        <main className="main-surface">{renderPage()}</main>
+      </div>
+    </div>
   );
 }

@@ -10,6 +10,8 @@ from .routers.claims_log import router as claims_log_router
 from .routers.auth import router as auth_router
 from .routers.workspace import router as workspace_router
 from .routers.documents import router as documents_router
+from .routers.appeals import router as appeals_router
+from .routers.notifications import router as notifications_router
 
 load_dotenv()
 
@@ -18,23 +20,24 @@ ALLOWED_ORIGINS = [
     FRONTEND_ORIGIN,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3002",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
 app = FastAPI(
     title="DenialGuard AI Backend API",
-    description=(
-        "Production-grade AI backend with JWT User Authentication, "
-        "predicts US healthcare claim denial risk before submission, "
-        "explains root causes using SHAP TreeExplainer, and suggests targeted corrective actions."
-    ),
-    version="1.2.0",
+    description="Production-grade AI backend with JWT User Authentication, claim denial prediction, SHAP explainability, appeals pipeline, and document ingestion.",
+    version="1.3.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +47,8 @@ app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 app.include_router(auth_router, tags=["Authentication (Root Alias)"])
 app.include_router(workspace_router)
 app.include_router(documents_router)
+app.include_router(appeals_router)
+app.include_router(notifications_router)
 app.include_router(predict_router)
 app.include_router(submit_outcome_router)
 app.include_router(claims_log_router)
@@ -63,15 +68,7 @@ def health_check():
 
     return {
         "status": "healthy",
-        "service": "DenialGuard AI Backend",
-        "version": "1.2.0",
-        "model_engine": "XGBoost + SHAP TreeExplainer",
-        "metrics": model_metrics,
+        "service": "DenialGuard AI Inference Engine & Platform API",
+        "model_version": "v1.3.0",
+        "metrics": model_metrics
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    host = os.getenv("HOST", "0.0.0.0")
-    uvicorn.run("app.main:app", host=host, port=port, reload=True)

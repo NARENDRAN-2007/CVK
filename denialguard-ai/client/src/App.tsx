@@ -1,12 +1,11 @@
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
-import Landing from "@/pages/Landing";
-import AuthPage from "@/pages/AuthPage";
+import { Toaster } from "sonner";
 import { Route, Switch } from "wouter";
+import NotFound from "./pages/NotFound";
+import Landing from "./pages/Landing";
+import AuthPage from "./pages/AuthPage";
+import Home from "./pages/Home";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Home from "./pages/Home";
 
 function Router() {
   return (
@@ -24,10 +23,8 @@ export default function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster position="top-right" />
-          <Router />
-        </TooltipProvider>
+        <Toaster position="top-right" richColors />
+        <Router />
       </ThemeProvider>
     </ErrorBoundary>
   );

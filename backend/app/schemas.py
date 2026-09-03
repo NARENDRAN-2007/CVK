@@ -5,59 +5,46 @@ from pydantic import BaseModel, Field
 
 
 class ClaimInput(BaseModel):
-    claim_id: Optional[str] = Field(
-        default=None, 
-        description="Unique claim identifier. If omitted, a unique ID will be auto-generated."
-    )
-    claim_type: str = Field(..., description="e.g. Professional, Institutional, Dental, Vision")
-    payer: str = Field(..., description="e.g. Medicare, Medicaid, UnitedHealthcare, BlueCross, Aetna, Cigna, Humana")
-    plan_type: str = Field(..., description="e.g. HMO, PPO, EPO, POS, Medicare Advantage")
-    eligibility_status: str = Field(..., description="e.g. Active, Inactive, Pending, Terminated")
-    provider_specialty: str = Field(..., description="e.g. Cardiology, Orthopedics, General Practice, Dermatology")
-    network_status: str = Field(..., description="e.g. In-Network, Out-of-Network")
-    icd10_code: str = Field(..., description="ICD-10 diagnosis code, e.g. I10, E11.9, M54.5")
-    cpt_code: str = Field(..., description="CPT procedure code, e.g. 99213, 99214, 27447")
-    modifiers: str = Field(default="None", description="CPT modifier(s), e.g. 25, 59, LT, RT, None")
-    pos_code: str = Field(..., description="Place of Service code, e.g. 11 (Office), 21 (Inpatient), 22 (Outpatient), 23 (ER), 02 (Telehealth)")
-    units_billed: int = Field(default=1, ge=1, description="Number of units billed")
-    charge_amount: Decimal = Field(..., gt=0, description="Total billed charge amount in USD")
-    pa_status: str = Field(..., description="Prior Authorization status, e.g. Approved, Missing, Denied, Not Required, Pending")
-    referral_status: str = Field(default="Not Required", description="Referral status, e.g. Active, Missing, Not Required, Expired")
-    documentation_flag: bool = Field(..., description="True if required clinical documentation/notes are attached")
-    dos: date = Field(..., description="Date of Service (YYYY-MM-DD)")
-    submission_date: date = Field(..., description="Claim Submission Date (YYYY-MM-DD)")
-    days_to_filing_deadline: int = Field(..., description="Days remaining before payer timely filing deadline")
-    cob_flag: bool = Field(default=False, description="Coordination of Benefits flag (True if secondary/tertiary payer involved)")
+    claim_id: Optional[str] = Field(default=None)
+    claim_type: str = Field(...)
+    payer: str = Field(...)
+    plan_type: str = Field(...)
+    eligibility_status: str = Field(...)
+    provider_specialty: str = Field(...)
+    network_status: str = Field(...)
+    icd10_code: str = Field(...)
+    cpt_code: str = Field(...)
+    modifiers: str = Field(default="None")
+    pos_code: str = Field(...)
+    units_billed: int = Field(default=1, ge=1)
+    charge_amount: Decimal = Field(..., gt=0)
+    pa_status: str = Field(...)
+    referral_status: str = Field(default="Not Required")
+    documentation_flag: bool = Field(...)
+    dos: date = Field(...)
+    submission_date: date = Field(...)
+    days_to_filing_deadline: int = Field(...)
+    cob_flag: bool = Field(default=False)
 
 
 class ContributingFactor(BaseModel):
-    feature: str = Field(..., description="Feature name or description")
-    impact: float = Field(..., description="SHAP feature importance magnitude")
-    direction: Literal["increases_risk", "decreases_risk"] = Field(
-        ..., description="Direction of risk impact"
-    )
+    feature: str = Field(...)
+    impact: float = Field(...)
+    direction: Literal["increases_risk", "decreases_risk"] = Field(...)
 
 
 class PredictionResponse(BaseModel):
     claim_id: str
-    risk_score: float = Field(..., ge=0, le=100, description="Predicted Denial Risk Score (0-100)")
-    predicted_carc_code: str = Field(..., description="Predicted Claim Adjustment Reason Code (e.g. CO-197, CO-16, CO-27, CLEAN)")
-    top_contributing_factors: List[ContributingFactor] = Field(
-        ..., description="Top SHAP contributing features ranked by absolute impact"
-    )
-    suggested_corrective_action: str = Field(
-        ..., description="Targeted actionable resolution before claim submission"
-    )
+    risk_score: float = Field(..., ge=0, le=100)
+    predicted_carc_code: str = Field(...)
+    top_contributing_factors: List[ContributingFactor] = Field(...)
+    suggested_corrective_action: str = Field(...)
 
 
 class SubmitOutcomeRequest(BaseModel):
     claim_id: str
-    actual_outcome: Literal["paid", "denied"] = Field(
-        ..., description="Final claim outcome: 'paid' or 'denied'"
-    )
-    denial_flag: bool = Field(
-        ..., description="True if claim was denied, False if paid"
-    )
+    actual_outcome: Literal["paid", "denied"] = Field(...)
+    denial_flag: bool = Field(...)
 
 
 class SubmitOutcomeResponse(BaseModel):
@@ -119,20 +106,20 @@ class CreateAccountRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    email: str = Field(..., description="User email address")
-    name: str = Field(..., description="User full display name")
-    role: str = Field(..., description="User role: 'Biller', 'Analyst', 'Admin', 'Read-only'")
+    email: str
+    name: str
+    role: str
     workspace_id: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
-    access_token: str = Field(..., description="JWT bearer access token")
-    token_type: str = Field(default="bearer", description="Token type, e.g. bearer")
-    user: UserResponse = Field(..., description="User profile information")
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
 
 
 class InviteMemberRequest(BaseModel):
-    role: Optional[str] = Field(default="Analyst", description="Role to grant: Admin, Analyst, or Biller")
+    role: str = Field(default="Analyst")
 
 
 class InviteMemberResponse(BaseModel):
@@ -140,6 +127,7 @@ class InviteMemberResponse(BaseModel):
     workspace_id: str
     role: str
     created_at: str
+    expires_at: Optional[str] = None
 
 
 class ClaimDocumentItem(BaseModel):
@@ -156,3 +144,73 @@ class DocumentUploadResponse(BaseModel):
     document: ClaimDocumentItem
     repredicted: bool
     new_prediction: Optional[PredictionResponse] = None
+
+
+class CreateAppealRequest(BaseModel):
+    claim_id: str
+    appeal_level: Literal["Level 1", "Level 2"] = "Level 1"
+    attached_document_ids: List[str] = Field(default_factory=list)
+    notes: Optional[str] = ""
+
+
+class AppealResponse(BaseModel):
+    id: str
+    claim_id: str
+    appeal_level: str
+    status: Literal["drafting", "submitted", "payer_review", "resolved"]
+    payer: str
+    billed_amount: Decimal
+    deadline: str
+    attached_document_ids: List[str]
+    notes: str
+    created_at: str
+    updated_at: str
+
+
+class UpdateAppealStatusRequest(BaseModel):
+    status: Literal["drafting", "submitted", "payer_review", "resolved"]
+
+
+class NotificationItem(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    message: str
+    type: Literal["high_risk", "document", "invite", "appeal", "system"]
+    is_read: bool
+    created_at: str
+    link: Optional[str] = None
+
+
+class WorkspaceSettingsRequest(BaseModel):
+    auto_assign: Optional[bool] = None
+    default_appeal_deadline_days: Optional[int] = None
+    high_risk_threshold: Optional[float] = None
+    email_notifications: Optional[bool] = None
+    deadline_alerts: Optional[bool] = None
+    weekly_digest: Optional[bool] = None
+
+
+class WorkspaceSettingsResponse(BaseModel):
+    workspace_id: str
+    auto_assign: bool = True
+    default_appeal_deadline_days: int = 30
+    high_risk_threshold: float = 60.0
+    email_notifications: bool = True
+    deadline_alerts: bool = True
+    weekly_digest: bool = False
+    updated_at: str
+
+
+class SecuritySettingsRequest(BaseModel):
+    session_timeout_minutes: Optional[int] = None
+    audit_log_retention_days: Optional[int] = None
+    enforce_ip_allowlist: Optional[bool] = None
+
+
+class SecuritySettingsResponse(BaseModel):
+    workspace_id: str
+    session_timeout_minutes: int = 60
+    audit_log_retention_days: int = 2555
+    enforce_ip_allowlist: bool = False
+    updated_at: str
