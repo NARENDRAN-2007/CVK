@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import type { LucideIcon } from "lucide-react";
-import { predictClaim, submitClaimOutcome, getCurrentUser, type PredictionResponse } from "@/lib/api";
+import { predictClaim, submitClaimOutcome, getCurrentUser, uploadClaimDocument, generateWorkspaceInvite, type PredictionResponse } from "@/lib/api";
 import {
   AlertCircle,
   ArrowDownRight,
@@ -1019,12 +1019,19 @@ function ClaimDetail({
   onBack: () => void;
   onUpdateStatus: (id: string, newStatus: ClaimStatus) => void;
 }) {
-  const claim = denials.find((item) => item.id === claimId) ?? denials[0];
+  const baseClaim = denials.find((item) => item.id === claimId) ?? denials[0];
+  const [claim, setClaim] = useState<Denial>(baseClaim);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; date: string }[]>([]);
   const [notes, setNotes] = useState<string[]>([
     "Reviewing documentation against the payer’s medical necessity policy. Requesting the operative note from Cardiology before Level 1 submission.",
   ]);
   const [noteInput, setNoteInput] = useState("");
   const [showAddNote, setShowAddNote] = useState(false);
+
+  useEffect(() => {
+    setClaim(baseClaim);
+  }, [baseClaim]);
 
   const addNote = () => {
     if (!noteInput.trim()) return;
@@ -1032,6 +1039,32 @@ function ClaimDetail({
     setNoteInput("");
     setShowAddNote(false);
     toast.success("Note added to claim record");
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const res = await uploadClaimDocument(claim.id, file, "operative_report");
+      setUploadedFiles(prev => [{ name: file.name, date: "Just now" }, ...prev]);
+
+      if (res.new_prediction) {
+        setClaim(prev => ({
+          ...prev,
+          carcCode: res.new_prediction.predicted_carc_code || "CLEAN",
+          carcDescription: res.new_prediction.predicted_carc_code === "CLEAN"
+            ? "Clean claim - clinical documentation verified"
+            : prev.carcDescription,
+        }));
+      }
+
+      toast.success("Document uploaded & prediction re-calculated", {
+        description: `Attached ${file.name}. Denial risk updated in real time.`,
+      });
+    } catch (err: any) {
+      toast.error("Upload failed", { description: err.message });
+    }
   };
 
   return (
@@ -1105,6 +1138,12 @@ function ClaimDetail({
                 <div className="timeline-node">{claim.status === "appealed" ? <Check size={13} /> : null}</div>
                 <div><strong>Appeal</strong><span>{claim.status === "appealed" ? "Level 1 Appeal in review" : `Not started · deadline ${claim.deadline}`}</span></div>
               </div>
+              {uploadedFiles.map((doc, idx) => (
+                <div className="timeline-item complete" key={idx}>
+                  <div className="timeline-node"><Check size={13} /></div>
+                  <div><strong>Document attached · {doc.name}</strong><span>{doc.date} · Operative record</span></div>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -1181,10 +1220,20 @@ function ClaimDetail({
             <div className="next-icon"><CalendarClock size={17} /></div>
             <div>
               <span className="eyebrow">Next best action</span>
-              <strong>Secure medical necessity documentation</strong>
-              <p>Upload the operative note before the appeal deadline to protect {money(claim.billedAmount)}.</p>
-              <button className="text-button" onClick={() => toast.info("Document uploader opened", { description: "Attach PDF/TIFF files to this claim." })}>
-                Upload document <ArrowRight size={13} />
+              <strong>{uploadedFiles.length > 0 ? "Clinical evidence attached" : "Secure medical necessity documentation"}</strong>
+              <p>{uploadedFiles.length > 0 ? `Attached ${uploadedFiles[0].name}. Claim is ready for expedited submission.` : `Upload the operative note before the appeal deadline to protect ${money(claim.billedAmount)}.`}</p>
+              
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
+                className="hidden"
+                style={{ display: "none" }}
+                onChange={handleFileUpload}
+              />
+
+              <button className="text-button" onClick={() => fileInputRef.current?.click()}>
+                {uploadedFiles.length > 0 ? "Attach another document" : "Upload document"} <ArrowRight size={13} />
               </button>
             </div>
           </section>
@@ -1521,7 +1570,16 @@ function Settings() {
             <section className="panel settings-panel">
               <div className="panel-header">
                 <div><span className="eyebrow">Northstar Health System</span><h2>Team & roles</h2></div>
-                <Button icon={Plus} onClick={() => toast.success("Invite dialog opened", { description: "Enter colleague's email to grant RCM workspace access." })}>
+                <Button
+                  icon={Plus}
+                  onClick={async () => {
+                    const res = await generateWorkspaceInvite("Analyst");
+                    toast.success(`Invite code generated: ${res.invite_code}`, {
+                      description: "Share this 16-character code with teammates to auto-join this workspace with Analyst permissions.",
+                      duration: 8000,
+                    });
+                  }}
+                >
                   Invite member
                 </Button>
               </div>

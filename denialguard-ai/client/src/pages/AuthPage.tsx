@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, LockKeyhole, ShieldCheck
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { validateAccountForm } from "@/lib/auth-validation";
-import { loginUser } from "@/lib/api";
+import { loginUser, registerUser } from "@/lib/api";
 import { toast } from "sonner";
 
 type AuthMode = "sign-in" | "create-account";
@@ -41,16 +41,27 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
     }
     setLoading(true);
     try {
-      const result = await loginUser(email || "admin@denialguard.com", password || "password123");
+      let result;
+      if (isCreate) {
+        result = await registerUser({
+          work_email: email,
+          password,
+          full_name: email.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+          invite_code: intent === "join" ? inviteCode.trim().toUpperCase() : undefined,
+          workspace_name: workspace.trim() || undefined,
+        });
+      } else {
+        result = await loginUser(email || "admin@denialguard.com", password || "password123");
+      }
       setSubmitted(true);
-      toast.success(isCreate ? "Workspace account created" : "Signed in successfully", {
+      toast.success(isCreate ? (intent === "join" ? "Joined team workspace!" : "Workspace account created") : "Signed in successfully", {
         description: `Welcome ${result.user?.name || "back"} to DenialGuard AI (${result.user?.role || "Biller"}).`,
       });
       setTimeout(() => {
         setLocation("/dashboard");
       }, 300);
     } catch (err: any) {
-      setFormError(err.message || "Sign-in failed. Check credentials.");
+      setFormError(err.message || "Authentication failed. Check credentials.");
       toast.error("Authentication failed", { description: err.message });
     } finally {
       setLoading(false);

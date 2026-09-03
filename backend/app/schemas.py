@@ -1,8 +1,3 @@
-"""
-Pydantic Schemas for DenialGuard AI
-Strict typing for raw claim inputs, engineered features, prediction outputs, and outcome submissions.
-"""
-
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional, Literal, Any, Dict
@@ -107,7 +102,6 @@ class ClaimLogRow(BaseModel):
     created_at: Optional[str] = None
 
 
-# Authentication & User Schemas
 UserRole = Literal["Biller", "Analyst", "Admin", "Read-only"]
 
 
@@ -116,13 +110,49 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class CreateAccountRequest(BaseModel):
+    work_email: str
+    password: str
+    full_name: str
+    invite_code: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+
 class UserResponse(BaseModel):
     email: str = Field(..., description="User email address")
     name: str = Field(..., description="User full display name")
     role: str = Field(..., description="User role: 'Biller', 'Analyst', 'Admin', 'Read-only'")
+    workspace_id: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
     access_token: str = Field(..., description="JWT bearer access token")
     token_type: str = Field(default="bearer", description="Token type, e.g. bearer")
     user: UserResponse = Field(..., description="User profile information")
+
+
+class InviteMemberRequest(BaseModel):
+    role: Optional[str] = Field(default="Analyst", description="Role to grant: Admin, Analyst, or Biller")
+
+
+class InviteMemberResponse(BaseModel):
+    invite_code: str
+    workspace_id: str
+    role: str
+    created_at: str
+
+
+class ClaimDocumentItem(BaseModel):
+    id: str
+    claim_id: str
+    document_type: str
+    document_title: str
+    storage_path: str
+    uploaded_at: str
+
+
+class DocumentUploadResponse(BaseModel):
+    status: str
+    document: ClaimDocumentItem
+    repredicted: bool
+    new_prediction: Optional[PredictionResponse] = None
