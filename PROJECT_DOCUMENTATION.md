@@ -242,7 +242,19 @@ Monetary amounts (`charge_amount`) use Python's `decimal.Decimal` in `app/schema
 
 ### 7.3 Dual-Mode Architecture & Resilience (`app/db.py`)
 - **Live Cloud Supabase Mode:** When `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided, all operations execute against live PostgreSQL tables.
-- **Zero-Crash Offline Fallback Mode:** If credentials are not configured or the network is unavailable, the backend automatically falls back to a thread-safe, in-memory queue with pre-seeded demo records, ensuring uninterrupted local development.
+- **Zero-Crash Offline Fallback Mode:** If credentials are not configured or the network is unavailable, the backend automatically falls back to a clean, thread-safe in-memory store that starts empty, ensuring true production behavior without pre-polluted demo records.
+
+### 7.4 Document Attachment & Dynamic Re-Prediction Pipeline (`POST /claims/{claim_id}/documents`)
+1. **Multipart File Handling:** Real file binary stream is ingested, assigned a UUID, and mapped to a cloud storage URI (e.g. `s3://denialguard-claims/{claim_id}/{filename}`).
+2. **Document Record Insertion:** Persisted into `claim_documents` linked via foreign key to `claim_id`.
+3. **Automated ML Re-Evaluation:** When a document is attached, `documentation_flag` transitions to `True`. The XGBoost engine and SHAP TreeExplainer re-evaluate the claim immediately.
+4. **UPSERT in Claims Log:** The recalculated risk score, new CARC code (e.g. transitioning from `CO-16` to `CLEAN`), and updated SHAP factors are immediately saved to `claims_log`.
+5. **Real-Time Client Update:** The frontend `ClaimDetail` receives `new_prediction` and updates the timeline, CARC badge, and next action recommendations without requiring a page reload.
+
+### 7.5 Team Workspace Invite & Auto-Join System (`POST /workspace/invite` & `POST /auth/register`)
+1. **Invite Code Generation:** Organization Admins generate unique 16-character alphanumeric invite codes (e.g. `NORTHSTAR-EA420B12`) assigned to a target role (`Analyst` or `Biller`).
+2. **Invite Storage:** Stored in `workspace_invites` with creation timestamp and target `workspace_id`.
+3. **Registration Resolution:** When a new user signs up on `/create-account` with an `invite_code`, the backend resolves the invite, assigns the pre-configured role, joins the user into the inviter's workspace, and generates a session JWT.
 
 ---
 
