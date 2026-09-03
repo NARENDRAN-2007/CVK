@@ -26,6 +26,8 @@ async def upload_document(
     doc_record = {
         "id": doc_id,
         "claim_id": claim_id,
+        "workspace_id": workspace_id,
+        "uploaded_by": current_user.get("work_email") or current_user.get("sub") or "User",
         "document_type": document_type,
         "document_title": file.filename,
         "storage_path": storage_path,
@@ -99,7 +101,8 @@ def list_documents(
     claim_id: str,
     current_user: dict = Depends(get_current_user)
 ) -> List[ClaimDocumentItem]:
-    docs = get_claim_documents(claim_id)
+    workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
+    docs = get_claim_documents(claim_id, workspace_id)
     return [
         ClaimDocumentItem(
             id=d["id"],
@@ -111,3 +114,4 @@ def list_documents(
         )
         for d in docs
     ]
+

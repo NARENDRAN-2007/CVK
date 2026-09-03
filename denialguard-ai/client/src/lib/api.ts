@@ -91,6 +91,15 @@ export type WorkspaceSettings = {
   updated_at: string;
 };
 
+export type WorkspaceMember = {
+  id: string;
+  work_email: string;
+  name: string;
+  role: string;
+  workspace_id: string;
+  created_at?: string;
+};
+
 export type SecuritySettings = {
   workspace_id: string;
   session_timeout_minutes: number;
@@ -100,6 +109,7 @@ export type SecuritySettings = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+
 
 function getAuthHeader(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -378,6 +388,18 @@ export async function markAllNotificationsRead(): Promise<void> {
   } catch {}
 }
 
+export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/workspace/members`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
 export async function generateWorkspaceInvite(role: string = "Analyst"): Promise<{ invite_code: string; workspace_id: string; role: string }> {
   const res = await fetch(`${API_BASE_URL}/workspace/invite`, {
     method: "POST",
@@ -393,6 +415,7 @@ export async function generateWorkspaceInvite(role: string = "Analyst"): Promise
   }
   return await res.json();
 }
+
 
 export async function fetchWorkspaceSettings(): Promise<WorkspaceSettings> {
   try {

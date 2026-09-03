@@ -19,11 +19,13 @@ import {
   fetchSecuritySettings,
   saveSecuritySettings,
   generateWorkspaceInvite,
+  fetchWorkspaceMembers,
   type PredictionResponse,
   type AppealItem,
   type NotificationItem,
   type WorkspaceSettings,
   type SecuritySettings,
+  type WorkspaceMember,
 } from "@/lib/api";
 import {
   AlertCircle,
@@ -486,40 +488,42 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
               <table className="claim-table">
                 <thead>
                   <tr>
-                    <th style={{ width: 40 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
-                    <th>Claim ID / Patient</th>
-                    <th>Payer</th>
-                    <th>CARC / Reason</th>
-                    <th className="text-right">Denied amount</th>
-                    <th>Deadline</th>
-                    <th>Status</th>
-                    <th>Assigned</th>
+                    <th style={{ width: 44, paddingLeft: 16 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
+                    <th style={{ minWidth: 160 }}>Claim ID / Patient</th>
+                    <th style={{ minWidth: 130 }}>Payer</th>
+                    <th style={{ minWidth: 260 }}>CARC / Reason</th>
+                    <th className="text-right" style={{ minWidth: 120, textAlign: "right" }}>Denied Amt</th>
+                    <th style={{ minWidth: 100 }}>Deadline</th>
+                    <th style={{ minWidth: 100 }}>Status</th>
+                    <th style={{ minWidth: 130, paddingRight: 16 }}>Assigned</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((claim) => (
                     <tr key={claim.id} onClick={() => onOpenClaim(claim.id)} className="clickable-row">
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td style={{ width: 44, paddingLeft: 16 }} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selected.includes(claim.id)}
                           onChange={() => setSelected(selected.includes(claim.id) ? selected.filter(id => id !== claim.id) : [...selected, claim.id])}
                         />
                       </td>
-                      <td>
-                        <strong>{claim.id}</strong>
+                      <td style={{ minWidth: 160 }}>
+                        <strong className="block font-bold text-[#1E2F4D]">{claim.id}</strong>
                         <span className="subtle">{claim.patientRef} · {claim.cptCodes.join(", ")}</span>
                       </td>
-                      <td>{claim.payer}</td>
-                      <td>
-                        <span className="carc-code-tag">{claim.carcCode}</span>
-                        <span className="subtle">{claim.carcDescription}</span>
+                      <td style={{ minWidth: 130 }} className="whitespace-nowrap font-medium text-[#1E2F4D]">{claim.payer}</td>
+                      <td style={{ minWidth: 260 }}>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="carc-code-tag">{claim.carcCode}</span>
+                          <span className="subtle">{claim.carcDescription}</span>
+                        </div>
                       </td>
-                      <td className="text-right font-mono font-bold text-[#1E2F4D]">{money(claim.billedAmount)}</td>
-                      <td><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
-                      <td><StatusBadge status={claim.status} /></td>
-                      <td>
-                        <div className="flex items-center gap-1.5 text-[12px]">
+                      <td style={{ minWidth: 120 }} className="text-right font-mono font-bold text-[#1E2F4D] whitespace-nowrap">{money(claim.billedAmount)}</td>
+                      <td style={{ minWidth: 100 }} className="whitespace-nowrap"><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
+                      <td style={{ minWidth: 100 }} className="whitespace-nowrap"><StatusBadge status={claim.status} /></td>
+                      <td style={{ minWidth: 130, paddingRight: 16 }}>
+                        <div className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
                           <Avatar initials={claim.avatar} tone="blue" size="sm" />
                           <span>{claim.assignedTo}</span>
                         </div>
@@ -857,6 +861,20 @@ function ClaimDetail({
 
   useEffect(() => {
     setClaim(baseClaim);
+    if (baseClaim?.id) {
+      fetchClaimDocuments(baseClaim.id).then((docs) => {
+        if (Array.isArray(docs) && docs.length > 0) {
+          setUploadedFiles(
+            docs.map((d: any) => ({
+              name: d.document_title || d.name || "Document",
+              date: d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently",
+            }))
+          );
+        } else {
+          setUploadedFiles([]);
+        }
+      });
+    }
   }, [baseClaim]);
 
   const addNote = () => {
@@ -1419,11 +1437,31 @@ function SettingsView() {
   });
 
   const [saving, setSaving] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<WorkspaceMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+
+  const loadMembers = () => {
+    setLoadingMembers(true);
+    fetchWorkspaceMembers()
+      .then((members) => {
+        if (Array.isArray(members) && members.length > 0) {
+          setTeamMembers(members);
+        }
+      })
+      .finally(() => setLoadingMembers(false));
+  };
 
   useEffect(() => {
     fetchWorkspaceSettings().then(setSettings);
     fetchSecuritySettings().then(setSecurity);
+    loadMembers();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "team") {
+      loadMembers();
+    }
+  }, [activeTab]);
 
   const handleSaveWorkflow = async () => {
     setSaving(true);
@@ -1485,6 +1523,7 @@ function SettingsView() {
                         description: "Valid for 7 days. Share this code with colleagues to auto-join this workspace.",
                         duration: 10000,
                       });
+                      loadMembers();
                     } catch (err: any) {
                       toast.error("Invite generation failed", { description: err.message });
                     }
@@ -1497,21 +1536,38 @@ function SettingsView() {
                 Invite team members with role-based access. New users enter this code at <code>/create-account</code> to automatically join your organization.
               </p>
               <div className="team-list">
-                <div className="team-row">
-                  <Avatar initials="AA" tone="blue" size="md" />
-                  <div className="team-member"><strong>Alice Admin</strong><span>admin@denialguard.com</span></div>
-                  <span className="role-pill">Admin</span>
-                </div>
-                <div className="team-row">
-                  <Avatar initials="MA" tone="violet" size="md" />
-                  <div className="team-member"><strong>Maya Alvarez</strong><span>malvarez@northstar.health</span></div>
-                  <span className="role-pill">Analyst</span>
-                </div>
-                <div className="team-row">
-                  <Avatar initials="JL" tone="gold" size="md" />
-                  <div className="team-member"><strong>Jordan Lee</strong><span>jlee@northstar.health</span></div>
-                  <span className="role-pill">Biller</span>
-                </div>
+                {teamMembers.length === 0 ? (
+                  <div className="p-6 text-center text-[12px] text-[#7C8A9C]">
+                    {loadingMembers ? "Loading team members..." : "No team members found."}
+                  </div>
+                ) : (
+                  teamMembers.map((member) => {
+                    const initials = (member.name || member.work_email || "U")
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")
+                      .toUpperCase()
+                      .slice(0, 2) || "U";
+                    const tone =
+                      member.role === "Admin"
+                        ? "blue"
+                        : member.role === "Analyst"
+                        ? "violet"
+                        : member.role === "Biller"
+                        ? "gold"
+                        : "green";
+                    return (
+                      <div className="team-row" key={member.id || member.work_email}>
+                        <Avatar initials={initials} tone={tone} size="md" />
+                        <div className="team-member">
+                          <strong>{member.name || member.work_email}</strong>
+                          <span>{member.work_email}</span>
+                        </div>
+                        <span className="role-pill">{member.role}</span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </section>
           )}

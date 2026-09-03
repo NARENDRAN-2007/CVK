@@ -214,3 +214,13 @@ class SecuritySettingsResponse(BaseModel):
     audit_log_retention_days: int = 2555
     enforce_ip_allowlist: bool = False
     updated_at: str
+
+
+class WorkspaceMemberItem(BaseModel):
+    id: str
+    work_email: str
+    name: str
+    role: str
+    workspace_id: str
+    created_at: Optional[str] = None
+

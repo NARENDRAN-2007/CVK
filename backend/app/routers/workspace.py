@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import APIRouter, Depends, status
 from ..schemas import (
     InviteMemberRequest,
@@ -5,18 +6,27 @@ from ..schemas import (
     WorkspaceSettingsRequest,
     WorkspaceSettingsResponse,
     SecuritySettingsRequest,
-    SecuritySettingsResponse
+    SecuritySettingsResponse,
+    WorkspaceMemberItem
 )
 from ..db import (
     create_workspace_invite,
     get_workspace_settings,
     save_workspace_settings,
     get_security_settings,
-    save_security_settings
+    save_security_settings,
+    get_workspace_members
 )
 from ..core.deps import get_current_user
 
 router = APIRouter(prefix="/workspace", tags=["Workspace"])
+
+
+@router.get("/members", response_model=List[WorkspaceMemberItem], status_code=status.HTTP_200_OK)
+def list_workspace_members(current_user: dict = Depends(get_current_user)) -> List[WorkspaceMemberItem]:
+    workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
+    members = get_workspace_members(workspace_id)
+    return [WorkspaceMemberItem(**m) for m in members]
 
 
 @router.post("/invite", response_model=InviteMemberResponse, status_code=status.HTTP_200_OK)
@@ -70,3 +80,4 @@ def update_security_settings(
     payload = request.model_dump(exclude_unset=True)
     saved = save_security_settings(workspace_id, payload)
     return SecuritySettingsResponse(**saved)
+

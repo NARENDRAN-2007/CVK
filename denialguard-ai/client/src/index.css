@@ -169,18 +169,20 @@ kbd { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .bulk-bar { display: flex; align-items: center; gap: 13px; min-height: 42px; padding: 0 16px; color: var(--ink); border-bottom: 1px solid rgba(91,140,191,.14); background: #F0F5FA; font-size: 10px; }
 .bulk-bar button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 0; color: var(--blue); border: 0; background: transparent; font-size: 10px; font-weight: 600; }
 .bulk-bar .bulk-clear { margin-left: auto; color: var(--muted); }
-.table-scroll { overflow-x: auto; }
-.data-table { width: 100%; min-width: 1060px; border-collapse: collapse; }
-.data-table th { height: 39px; padding: 0 8px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-align: left; text-transform: uppercase; white-space: nowrap; }
-.data-table th:first-child, .data-table td:first-child { padding-left: 16px; }
-.data-table th:last-child, .data-table td:last-child { padding-right: 16px; }
-.data-table td { height: 70px; padding: 8px; color: var(--body); border-bottom: 1px solid rgba(94,114,140,.09); font-size: 10px; vertical-align: middle; }
-.table-row { cursor: pointer; animation: row-enter .28s var(--ease-out) both; transition: background .14s; }
-.table-row:hover { background: #F4F7FA; }
+.table-scroll, .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.data-table, .claim-table { width: 100%; min-width: 980px; border-collapse: collapse; text-align: left; table-layout: auto; }
+.data-table th, .claim-table th { height: 44px; padding: 8px 12px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-align: left; text-transform: uppercase; white-space: nowrap; vertical-align: middle; box-sizing: border-box; }
+.data-table th:first-child, .data-table td:first-child, .claim-table th:first-child, .claim-table td:first-child { padding-left: 16px; }
+.data-table th:last-child, .data-table td:last-child, .claim-table th:last-child, .claim-table td:last-child { padding-right: 16px; }
+.data-table td, .claim-table td { height: 64px; padding: 10px 12px; color: var(--body); border-bottom: 1px solid rgba(94,114,140,.09); font-size: 11px; vertical-align: middle; box-sizing: border-box; }
+.table-row, .clickable-row { cursor: pointer; animation: row-enter .28s var(--ease-out) both; transition: background .14s; }
+.table-row:hover, .clickable-row:hover, .claim-table tbody tr:hover { background: #F4F7FA; }
+.carc-code-tag { display: inline-flex; align-items: center; justify-content: center; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 700; color: var(--coral); background: #F8E8E8; white-space: nowrap; }
 @keyframes row-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .check-cell { width: 36px; }
-.data-table input[type='checkbox'] { width: 14px; height: 14px; margin: 0; accent-color: var(--blue); }
+.data-table input[type='checkbox'], .claim-table input[type='checkbox'] { width: 14px; height: 14px; margin: 0; accent-color: var(--blue); }
 .claim-cell strong, .reason-cell strong { display: block; color: var(--ink); font-size: 10px; font-weight: 650; }
+
 .claim-cell span, .reason-cell span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; }
 .claim-cell em, .reason-cell em { color: #ACB7C4; font-style: normal; }
 .payer-cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }

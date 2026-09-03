@@ -256,7 +256,7 @@ def insert_claim_document(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     return doc_data
 
 
-def get_claim_documents(claim_id: str) -> List[Dict[str, Any]]:
+def get_claim_documents(claim_id: str, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
     client = get_supabase()
     if client and _is_live_mode:
         try:
@@ -267,6 +267,41 @@ def get_claim_documents(claim_id: str) -> List[Dict[str, Any]]:
             logger.warning(f"Failed to fetch claim_documents from Supabase: {e}")
 
     return [d for d in _in_memory_claim_documents if d.get("claim_id") == claim_id]
+
+
+def get_workspace_members(workspace_id: str) -> List[Dict[str, Any]]:
+    client = get_supabase()
+    if client and _is_live_mode:
+        try:
+            res = client.table("users").select("id, work_email, name, full_name, role, workspace_id, created_at").eq("workspace_id", workspace_id).order("created_at", desc=False).execute()
+            if res.data is not None and len(res.data) > 0:
+                return [
+                    {
+                        "id": u.get("id") or f"usr-{u.get('work_email')}",
+                        "work_email": u.get("work_email") or u.get("email", ""),
+                        "name": u.get("name") or u.get("full_name") or u.get("work_email", ""),
+                        "role": u.get("role") or "Analyst",
+                        "workspace_id": u.get("workspace_id") or workspace_id,
+                        "created_at": u.get("created_at") or ""
+                    }
+                    for u in res.data
+                ]
+        except Exception as e:
+            logger.warning(f"Failed to fetch workspace members from Supabase: {e}")
+
+    members = []
+    for email, u in _in_memory_users.items():
+        user_ws = u.get("workspace_id")
+        if user_ws == workspace_id or (workspace_id == "ws-northstar-001" and user_ws in ["ws-northstar-001", None, ""]):
+            members.append({
+                "id": u.get("id") or f"usr-{email}",
+                "work_email": u.get("work_email") or email,
+                "name": u.get("name") or u.get("full_name") or email,
+                "role": u.get("role") or "Analyst",
+                "workspace_id": u.get("workspace_id") or workspace_id,
+                "created_at": u.get("created_at") or ""
+            })
+    return members
 
 
 def create_workspace_invite(workspace_id: str, role: str = "Analyst", expires_in_days: int = 7) -> Dict[str, Any]:
