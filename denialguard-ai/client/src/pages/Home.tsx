@@ -834,6 +834,59 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
   );
 }
 
+const getPriorityInfo = (days: number) => {
+  const d = Math.max(0, Math.round(Number(days) || 0));
+  if (d < 10) {
+    return { label: "High", className: "text-coral", text: `High · ${d}d to deadline` };
+  } else if (d <= 30) {
+    return { label: "Medium", className: "text-gold", text: `Medium · ${d}d to deadline` };
+  } else {
+    return { label: "Low", className: "text-green", text: `Low · ${d}d to deadline` };
+  }
+};
+
+const getRarcInfo = (carcCode: string) => {
+  switch (carcCode) {
+    case "CO-16":
+      return {
+        code: "N290",
+        description: "The payer indicates the service was not supported under the submitted documentation or coverage policy.",
+      };
+    case "CO-197":
+      return {
+        code: "N54",
+        description: "Claim information is inconsistent with pre-certified/authorized services.",
+      };
+    case "CO-27":
+      return {
+        code: "N30",
+        description: "Patient ineligible for this service.",
+      };
+    case "CO-29":
+      return {
+        code: "N130",
+        description: "Consult plan benefit documents/guidelines for information about restrictions for this service.",
+      };
+    case "CO-45":
+      return {
+        code: "N14",
+        description: "Payment based on a contractual amount or agreement, fee schedule, or maximum allowable amount.",
+      };
+    case "CO-50":
+      return {
+        code: "N54",
+        description: "Non-covered service or missing referral authorization from primary care provider.",
+      };
+    case "CO-4":
+      return {
+        code: "N56",
+        description: "Procedure code inconsistent with modifier used or distinct procedural criteria.",
+      };
+    default:
+      return null;
+  }
+};
+
 function ClaimDetail({
   claimId,
   denials,
@@ -878,9 +931,14 @@ function ClaimDetail({
   const [showAddNote, setShowAddNote] = useState(false);
 
   useEffect(() => {
-    setClaim(baseClaim);
-    if (baseClaim?.id) {
-      fetchClaimDocuments(baseClaim.id).then((docs) => {
+    const found = denials.find((item) => item.id === claimId);
+    if (found) {
+      setClaim(found);
+    } else {
+      setClaim(baseClaim);
+    }
+    if (claimId) {
+      fetchClaimDocuments(claimId).then((docs) => {
         if (Array.isArray(docs) && docs.length > 0) {
           setUploadedFiles(
             docs.map((d: any) => ({
@@ -893,7 +951,7 @@ function ClaimDetail({
         }
       });
     }
-  }, [baseClaim]);
+  }, [claimId, denials]);
 
   const addNote = () => {
     if (!noteInput.trim()) return;
@@ -915,9 +973,9 @@ function ClaimDetail({
         setClaim(prev => ({
           ...prev,
           carcCode: res.new_prediction.predicted_carc_code || "CLEAN",
-          carcDescription: res.new_prediction.predicted_carc_code === "CLEAN"
-            ? "Clean claim - clinical documentation verified"
-            : prev.carcDescription,
+          carcDescription: res.new_prediction.suggested_corrective_action || (res.new_prediction.predicted_carc_code === "CLEAN"
+            ? "Claim validation passed with low denial risk. Ready for clean EDI submission."
+            : prev.carcDescription),
         }));
       }
 
@@ -928,6 +986,10 @@ function ClaimDetail({
       toast.error("Upload failed", { description: err.message });
     }
   };
+
+  const priorityInfo = getPriorityInfo(claim.deadlineDays);
+  const rarcInfo = getRarcInfo(claim.carcCode);
+  const isCleanClaim = claim.carcCode === "CLEAN" || claim.status === "paid";
 
   return (
     <div className="page-content claim-detail-page">
@@ -990,7 +1052,9 @@ function ClaimDetail({
               <div className="code-callout-badge">{claim.carcCode}</div>
               <div>
                 <strong>{claim.carcDescription}</strong>
-                <p>RARC {claim.rarcCode} · The payer indicates the service was not supported under the submitted documentation or coverage policy.</p>
+                {rarcInfo && (
+                  <p>RARC {rarcInfo.code} · {rarcInfo.description}</p>
+                )}
               </div>
             </div>
           </section>
@@ -1060,7 +1124,7 @@ function ClaimDetail({
               </div>
             </div>
             <div className="owner-line"><span>Department</span><strong>{claim.department}</strong></div>
-            <div className="owner-line"><span>Priority</span><strong className="text-coral">High · 3d to deadline</strong></div>
+            <div className="owner-line"><span>Priority</span><strong className={priorityInfo.className}>{priorityInfo.text}</strong></div>
           </section>
 
           <section className="panel details-panel">
@@ -1076,21 +1140,49 @@ function ClaimDetail({
             <div className="next-icon"><CalendarClock size={17} /></div>
             <div>
               <span className="eyebrow">Next best action</span>
-              <strong>{uploadedFiles.length > 0 ? "Clinical evidence attached" : "Secure medical necessity documentation"}</strong>
-              <p>{uploadedFiles.length > 0 ? `Attached ${uploadedFiles[0].name}. Claim is ready for submission.` : `Upload the operative note to protect ${money(claim.billedAmount)}.`}</p>
-              
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
-                className="hidden"
-                style={{ display: "none" }}
-                onChange={handleFileUpload}
-              />
+              {isCleanClaim ? (
+                <>
+                  <strong>No action needed · Clean claim</strong>
+                  <p>{claim.carcDescription || "Claim validation passed with low denial risk. Ready for clean EDI submission."}</p>
+                  <div className="mt-2 flex items-center gap-1.5 text-[12px] font-semibold text-[#4D8D79]">
+                    <Check size={14} /> Ready for EDI transmission
+                  </div>
+                </>
+              ) : (
+                <>
+                  <strong>
+                    {uploadedFiles.length > 0
+                      ? "Clinical evidence attached"
+                      : claim.carcCode === "CO-197"
+                      ? "Obtain prior authorization"
+                      : claim.carcCode === "CO-16"
+                      ? "Secure clinical documentation"
+                      : claim.carcCode === "CO-27"
+                      ? "Re-verify subscriber eligibility"
+                      : claim.carcCode === "CO-29"
+                      ? "Expedite timely filing"
+                      : "Recommended corrective action"}
+                  </strong>
+                  <p>
+                    {uploadedFiles.length > 0
+                      ? `Attached ${uploadedFiles[0].name}. Claim is ready for submission.`
+                      : claim.carcDescription || "Review denial drivers and attach supporting documentation before submission."}
+                  </p>
+                  
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
+                    className="hidden"
+                    style={{ display: "none" }}
+                    onChange={handleFileUpload}
+                  />
 
-              <button className="text-button" onClick={() => fileInputRef.current?.click()}>
-                {uploadedFiles.length > 0 ? "Attach another document" : "Upload document"} <ArrowRight size={13} />
-              </button>
+                  <button className="text-button" onClick={() => fileInputRef.current?.click()}>
+                    {uploadedFiles.length > 0 ? "Attach another document" : "Upload supporting document"} <ArrowRight size={13} />
+                  </button>
+                </>
+              )}
             </div>
           </section>
         </aside>
@@ -1916,12 +2008,12 @@ export default function Home() {
         billedAmount: Number(row.charge_amount) || 18450,
         status: (row.actual_outcome === "paid" ? "paid" : row.actual_outcome === "denied" ? "denied" : (row.predicted_risk_score && row.predicted_risk_score >= 60 ? "denied" : "pending")) as ClaimStatus,
         carcCode: row.predicted_carc_code || "CO-16",
-        carcDescription: row.suggested_corrective_action || "Pre-submission review recommended",
-        rarcCode: "N290",
+        carcDescription: row.suggested_corrective_action || (row.predicted_carc_code === "CLEAN" ? "Claim validation passed with low denial risk. Ready for clean EDI submission." : "Pre-submission review recommended"),
+        rarcCode: row.predicted_carc_code === "CO-16" ? "N290" : row.predicted_carc_code === "CO-197" ? "N54" : row.predicted_carc_code === "CO-27" ? "N30" : row.predicted_carc_code === "CO-29" ? "N130" : row.predicted_carc_code === "CO-45" ? "N14" : "",
         groupCode: "CO",
         agingDays: row.days_to_filing_deadline ? Math.max(1, 90 - row.days_to_filing_deadline) : 1,
-        deadline: `${row.days_to_filing_deadline || 30} days`,
-        deadlineDays: row.days_to_filing_deadline || 30,
+        deadline: `${row.days_to_filing_deadline !== undefined && row.days_to_filing_deadline !== null ? row.days_to_filing_deadline : 30} days`,
+        deadlineDays: row.days_to_filing_deadline !== undefined && row.days_to_filing_deadline !== null ? Number(row.days_to_filing_deadline) : 30,
         assignedTo: "Maya Alvarez",
         avatar: "MA",
         department: row.provider_specialty || "Orthopedics",

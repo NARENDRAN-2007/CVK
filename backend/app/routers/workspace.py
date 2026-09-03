@@ -60,7 +60,12 @@ def update_settings(
 ) -> WorkspaceSettingsResponse:
     workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
     payload = request.model_dump(exclude_unset=True)
-    saved = save_workspace_settings(workspace_id, payload)
+    success, saved = save_workspace_settings(workspace_id, payload)
+    if not success:
+        import logging
+        logging.getLogger("denialguard.workspace").warning(
+            f"[Workspace] Workspace settings for {workspace_id} updated in-memory but failed to persist to Supabase."
+        )
     return WorkspaceSettingsResponse(**saved)
 
 
@@ -78,6 +83,11 @@ def update_security_settings(
 ) -> SecuritySettingsResponse:
     workspace_id = current_user.get("workspace_id") or "ws-northstar-001"
     payload = request.model_dump(exclude_unset=True)
-    saved = save_security_settings(workspace_id, payload)
+    success, saved = save_security_settings(workspace_id, payload)
+    if not success:
+        import logging
+        logging.getLogger("denialguard.workspace").warning(
+            f"[Workspace] Security settings for {workspace_id} updated in-memory but failed to persist to Supabase."
+        )
     return SecuritySettingsResponse(**saved)
 

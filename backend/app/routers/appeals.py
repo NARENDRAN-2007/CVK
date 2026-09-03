@@ -56,7 +56,12 @@ def create_appeal(
         "created_by": current_user.get("sub", "")
     }
 
-    created = insert_appeal(appeal_data)
+    success, created = insert_appeal(appeal_data)
+    if not success:
+        import logging
+        logging.getLogger("denialguard.appeals").warning(
+            f"[Appeals] Appeal {created.get('id')} created in-memory but failed to persist to Supabase."
+        )
 
     insert_notification({
         "workspace_id": workspace_id,
@@ -69,13 +74,13 @@ def create_appeal(
     return AppealResponse(
         id=created["id"],
         claim_id=created["claim_id"],
-        appeal_level=created["appeal_level"],
+        appeal_level=created.get("appeal_level") or created.get("level", "Level 1"),
         status=created["status"],
         payer=created["payer"],
-        billed_amount=Decimal(str(created["billed_amount"])),
-        deadline=created["deadline"],
-        attached_document_ids=created["attached_document_ids"],
-        notes=created["notes"],
+        billed_amount=Decimal(str(created.get("billed_amount", "0.00"))),
+        deadline=created.get("deadline", "30 days"),
+        attached_document_ids=created.get("attached_document_ids", []),
+        notes=created.get("notes", ""),
         created_at=created["created_at"],
         updated_at=created["updated_at"]
     )
@@ -87,9 +92,14 @@ def patch_appeal_status(
     request: UpdateAppealStatusRequest,
     current_user: dict = Depends(get_current_user)
 ) -> AppealResponse:
-    updated = update_appeal_status(appeal_id, request.status)
+    success, updated = update_appeal_status(appeal_id, request.status)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Appeal with ID '{appeal_id}' not found")
+    if not success:
+        import logging
+        logging.getLogger("denialguard.appeals").warning(
+            f"[Appeals] Appeal {appeal_id} status updated in-memory but failed to persist to Supabase."
+        )
 
     insert_notification({
         "workspace_id": updated.get("workspace_id") or "ws-northstar-001",
@@ -102,7 +112,7 @@ def patch_appeal_status(
     return AppealResponse(
         id=updated["id"],
         claim_id=updated["claim_id"],
-        appeal_level=updated.get("appeal_level", "Level 1"),
+        appeal_level=updated.get("appeal_level") or updated.get("level", "Level 1"),
         status=updated["status"],
         payer=updated.get("payer", "Commercial Payer"),
         billed_amount=Decimal(str(updated.get("billed_amount", "0.00"))),

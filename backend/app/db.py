@@ -434,11 +434,46 @@ def mark_workspace_invite_used(invite_code: str):
             logger.warning(f"Could not mark workspace invite as used in Supabase: {e}")
 
 
-def insert_appeal(appeal_data: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_appeal_row_for_supabase(d: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_cols = {
+        "id", "workspace_id", "claim_id", "payer", "level", "status",
+        "docs_attached", "notes", "created_at", "updated_at"
+    }
+    out = {}
+    for k, v in d.items():
+        if k in allowed_cols:
+            out[k] = v
+
+    # Map aliases if present
+    if "level" not in out and "appeal_level" in d:
+        out["level"] = str(d["appeal_level"])
+    
+    # Ensure docs_attached is an integer
+    if "docs_attached" not in out:
+        if "attached_document_ids" in d and isinstance(d["attached_document_ids"], list):
+            out["docs_attached"] = len(d["attached_document_ids"])
+        else:
+            out["docs_attached"] = 0
+    else:
+        try:
+            out["docs_attached"] = int(out["docs_attached"])
+        except Exception:
+            out["docs_attached"] = 0
+
+    # Ensure dates and timestamps are serializable
+    for k in ("created_at", "updated_at"):
+        if k in out and isinstance(out[k], (date, datetime)):
+            out[k] = out[k].isoformat()
+
+    return out
+
+
+def insert_appeal(appeal_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     if not appeal_data.get("id"):
         appeal_data["id"] = f"APL-{uuid.uuid4().hex[:6].upper()}"
     now_iso = datetime.now(timezone.utc).isoformat()
-    appeal_data["created_at"] = now_iso
+    if "created_at" not in appeal_data:
+        appeal_data["created_at"] = now_iso
     appeal_data["updated_at"] = now_iso
 
     _in_memory_appeals.insert(0, appeal_data)
@@ -446,12 +481,15 @@ def insert_appeal(appeal_data: Dict[str, Any]) -> Dict[str, Any]:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            sanitized = _deep_sanitize(appeal_data)
+            sanitized = _sanitize_appeal_row_for_supabase(appeal_data)
             client.table("appeals").insert(sanitized).execute()
+            return True, appeal_data
         except Exception as e:
-            logger.warning(f"Could not insert appeal into Supabase: {e}")
+            appeal_id = appeal_data.get("id", "UNKNOWN")
+            logger.error(f"Failed to insert appeal into Supabase for appeal_id={appeal_id}: {e}")
+            return False, appeal_data
 
-    return appeal_data
+    return True, appeal_data
 
 
 def get_appeals(workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -463,17 +501,32 @@ def get_appeals(workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
                 query = query.eq("workspace_id", workspace_id)
             res = query.execute()
             if res.data is not None:
-                return res.data
+                formatted = []
+                for row in res.data:
+                    r = dict(row)
+                    if "level" in r and "appeal_level" not in r:
+                        r["appeal_level"] = r["level"]
+                    if "docs_attached" in r and "attached_document_ids" not in r:
+                        r["attached_document_ids"] = []
+                    formatted.append(r)
+                return formatted
         except Exception as e:
-            logger.warning(f"Could not fetch appeals from Supabase: {e}")
+            logger.error(f"Could not fetch appeals from Supabase: {e}")
 
     if workspace_id:
         return [a for a in _in_memory_appeals if a.get("workspace_id") == workspace_id]
     return _in_memory_appeals
 
 
-def update_appeal_status(appeal_id: str, new_status: str) -> Optional[Dict[str, Any]]:
+def update_appeal_status(appeal_id: str, new_status: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
     now_iso = datetime.now(timezone.utc).isoformat()
+    record = None
+    for a in _in_memory_appeals:
+        if a.get("id") == appeal_id:
+            a["status"] = new_status
+            a["updated_at"] = now_iso
+            record = a
+            break
 
     client = get_supabase()
     if client and _is_live_mode:
@@ -483,20 +536,21 @@ def update_appeal_status(appeal_id: str, new_status: str) -> Optional[Dict[str, 
                 "updated_at": now_iso
             }).eq("id", appeal_id).execute()
             if res.data and len(res.data) > 0:
-                return res.data[0]
+                r = dict(res.data[0])
+                if "level" in r and "appeal_level" not in r:
+                    r["appeal_level"] = r["level"]
+                return True, r
+            elif record:
+                return True, record
+            return False, None
         except Exception as e:
-            logger.warning(f"Could not update appeal in Supabase: {e}")
+            logger.error(f"Failed to update appeal status in Supabase for appeal_id={appeal_id}: {e}")
+            return False, record
 
-    for a in _in_memory_appeals:
-        if a.get("id") == appeal_id:
-            a["status"] = new_status
-            a["updated_at"] = now_iso
-            return a
-
-    return None
+    return (True, record) if record else (False, None)
 
 
-def insert_notification(notif_data: Dict[str, Any]) -> Dict[str, Any]:
+def insert_notification(notif_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     if not notif_data.get("id"):
         notif_data["id"] = f"notif-{uuid.uuid4().hex[:8]}"
     if not notif_data.get("created_at"):
@@ -512,10 +566,12 @@ def insert_notification(notif_data: Dict[str, Any]) -> Dict[str, Any]:
     if client and _is_live_mode:
         try:
             client.table("notifications").insert(notif_data).execute()
+            return True, notif_data
         except Exception as e:
             logger.warning(f"Could not insert notification into Supabase: {e}")
+            return False, notif_data
 
-    return notif_data
+    return True, notif_data
 
 
 def get_notifications(workspace_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
@@ -537,21 +593,24 @@ def get_notifications(workspace_id: Optional[str] = None, limit: int = 50) -> Li
 
 
 def mark_notification_read(notif_id: str) -> bool:
+    success = True
     client = get_supabase()
     if client and _is_live_mode:
         try:
             client.table("notifications").update({"is_read": True}).eq("id", notif_id).execute()
         except Exception as e:
             logger.warning(f"Could not mark notification read in Supabase: {e}")
+            success = False
 
     for n in _in_memory_notifications:
         if n.get("id") == notif_id:
             n["is_read"] = True
-            return True
+            return success
     return False
 
 
 def mark_all_notifications_read(workspace_id: Optional[str] = None) -> bool:
+    success = True
     client = get_supabase()
     if client and _is_live_mode:
         try:
@@ -561,11 +620,12 @@ def mark_all_notifications_read(workspace_id: Optional[str] = None) -> bool:
             query.execute()
         except Exception as e:
             logger.warning(f"Could not mark all notifications read in Supabase: {e}")
+            success = False
 
     for n in _in_memory_notifications:
         if not workspace_id or n.get("workspace_id") == workspace_id:
             n["is_read"] = True
-    return True
+    return success
 
 
 def get_workspace_settings(workspace_id: str) -> Dict[str, Any]:
@@ -593,7 +653,7 @@ def get_workspace_settings(workspace_id: str) -> Dict[str, Any]:
     return _in_memory_workspace_settings.get(ws_id, default_settings)
 
 
-def save_workspace_settings(workspace_id: str, settings_data: Dict[str, Any]) -> Dict[str, Any]:
+def save_workspace_settings(workspace_id: str, settings_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     ws_id = workspace_id or "ws-northstar-001"
     current = get_workspace_settings(ws_id)
     current.update({k: v for k, v in settings_data.items() if v is not None})
@@ -606,10 +666,12 @@ def save_workspace_settings(workspace_id: str, settings_data: Dict[str, Any]) ->
     if client and _is_live_mode:
         try:
             client.table("workspace_settings").upsert(current, on_conflict="workspace_id").execute()
+            return True, current
         except Exception as e:
-            logger.warning(f"Could not save workspace_settings to Supabase: {e}")
+            logger.error(f"Failed to save workspace_settings to Supabase: {e}")
+            return False, current
 
-    return current
+    return True, current
 
 
 def get_security_settings(workspace_id: str) -> Dict[str, Any]:
@@ -634,7 +696,7 @@ def get_security_settings(workspace_id: str) -> Dict[str, Any]:
     return _in_memory_security_settings.get(ws_id, default_sec)
 
 
-def save_security_settings(workspace_id: str, settings_data: Dict[str, Any]) -> Dict[str, Any]:
+def save_security_settings(workspace_id: str, settings_data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     ws_id = workspace_id or "ws-northstar-001"
     current = get_security_settings(ws_id)
     current.update({k: v for k, v in settings_data.items() if v is not None})
@@ -647,10 +709,12 @@ def save_security_settings(workspace_id: str, settings_data: Dict[str, Any]) -> 
     if client and _is_live_mode:
         try:
             client.table("workspace_security_settings").upsert(current, on_conflict="workspace_id").execute()
+            return True, current
         except Exception as e:
-            logger.warning(f"Could not save workspace_security_settings to Supabase: {e}")
+            logger.error(f"Failed to save workspace_security_settings to Supabase: {e}")
+            return False, current
 
-    return current
+    return True, current
 
 
 init_db()
