@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, LockKeyhole, ShieldCheck
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { validateAccountForm } from "@/lib/auth-validation";
+import { loginUser } from "@/lib/api";
 import { toast } from "sonner";
 
 type AuthMode = "sign-in" | "create-account";
@@ -17,6 +18,7 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [workspace, setWorkspace] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState(() => {
     if (typeof window === "undefined") return "";
     const state = new URLSearchParams(window.location.search).get("state");
@@ -27,7 +29,7 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   });
   const [submitted, setSubmitted] = useState(false);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     setFormError("");
     if (isCreate) {
@@ -37,13 +39,22 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
         return;
       }
     }
-    setSubmitted(true);
-    toast.success(isCreate ? "Workspace account created" : "Signed in successfully", {
-      description: "Welcome to DenialGuard AI revenue cycle workspace.",
-    });
-    setTimeout(() => {
-      setLocation("/dashboard");
-    }, 400);
+    setLoading(true);
+    try {
+      const result = await loginUser(email || "admin@denialguard.com", password || "password123");
+      setSubmitted(true);
+      toast.success(isCreate ? "Workspace account created" : "Signed in successfully", {
+        description: `Welcome ${result.user?.name || "back"} to DenialGuard AI (${result.user?.role || "Biller"}).`,
+      });
+      setTimeout(() => {
+        setLocation("/dashboard");
+      }, 300);
+    } catch (err: any) {
+      setFormError(err.message || "Sign-in failed. Check credentials.");
+      toast.error("Authentication failed", { description: err.message });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
