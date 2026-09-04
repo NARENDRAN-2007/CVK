@@ -4,8 +4,8 @@ Provides recent claims logs ordered by creation timestamp for dashboard reads an
 """
 
 from typing import List, Any, Dict
-from fastapi import APIRouter, Query, status, Depends
-from ..db import fetch_claims_log
+from fastapi import APIRouter, Query, status, Depends, HTTPException
+from ..db import fetch_claims_log, delete_claim_log
 from ..core.deps import get_current_user
 
 router = APIRouter(tags=["Claims Audit Log"])
@@ -24,3 +24,20 @@ def get_claims_log(
 ) -> List[Dict[str, Any]]:
     records = fetch_claims_log(limit=limit)
     return records
+
+
+@router.delete(
+    "/claims-log/{claim_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete Claim Record",
+    description="Deletes a claim record from the audit log and cloud persistence."
+)
+def delete_claim(
+    claim_id: str,
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    success = delete_claim_log(claim_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found or could not be deleted")
+    return {"message": "Claim deleted successfully", "claim_id": claim_id}
+

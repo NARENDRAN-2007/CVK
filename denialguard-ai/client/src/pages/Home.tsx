@@ -9,6 +9,7 @@ import {
   uploadClaimDocument,
   fetchClaimDocuments,
   fetchClaimsLog,
+  deleteClaimLog,
   fetchAppeals,
   createAppeal,
   updateAppealStatus,
@@ -69,6 +70,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
   UserRound,
@@ -496,12 +498,28 @@ function Dashboard({ onNavigate, denials, appeals }: { onNavigate: (path: string
   );
 }
 
-function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void; onScoreClaim: () => void }) {
+function Worklist({
+  denials,
+  onOpenClaim,
+  onScoreClaim,
+  onDeleteClaim,
+  onDeleteClaims,
+}: {
+  denials: Denial[];
+  onOpenClaim: (id: string) => void;
+  onScoreClaim: () => void;
+  onDeleteClaim: (id: string) => Promise<void>;
+  onDeleteClaims: (ids: string[]) => Promise<void>;
+}) {
   const [payer, setPayer] = useState("all");
   const [aging, setAging] = useState("all");
   const [assignee, setAssignee] = useState("all");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isDeletingBulk, setIsDeletingBulk] = useState(false);
 
   const filtered = useMemo(() => denials.filter((claim) => {
     const matchesPayer = payer === "all" || claim.payer === payer;
@@ -523,6 +541,15 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
         description="Prioritized by appeal deadline, aging, and financial exposure."
         action={
           <div className="heading-actions">
+            {selected.length > 0 && (
+              <Button
+                variant="danger"
+                icon={Trash2}
+                onClick={() => setConfirmBulkDelete(true)}
+              >
+                Delete selected ({selected.length})
+              </Button>
+            )}
             {filtered.length > 0 && (
               <Button
                 variant="secondary"
@@ -546,6 +573,43 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
           </div>
         }
       />
+
+      {confirmBulkDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-[#DDE4EC]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#C77B7B]/15 text-[#C77B7B]">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="font-bold text-[16px] text-[#1E2F4D]">Delete {selected.length} Selected Claim{selected.length > 1 ? "s" : ""}?</h3>
+                <p className="text-[12px] text-[#7C8A9C]">This will remove them from the worklist & backend log.</p>
+              </div>
+            </div>
+            <p className="mt-4 text-[13px] text-[#48586B]">
+              Are you sure you want to permanently delete {selected.length} claim record{selected.length > 1 ? "s" : ""}? This action cannot be undone.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setConfirmBulkDelete(false)} disabled={isDeletingBulk}>
+                Cancel
+              </Button>
+              <button
+                className="rounded-xl bg-[#C77B7B] px-4 py-2 text-[12px] font-semibold text-white hover:bg-[#b06767] transition disabled:opacity-50"
+                disabled={isDeletingBulk}
+                onClick={async () => {
+                  setIsDeletingBulk(true);
+                  await onDeleteClaims(selected);
+                  setSelected([]);
+                  setConfirmBulkDelete(false);
+                  setIsDeletingBulk(false);
+                }}
+              >
+                {isDeletingBulk ? "Deleting..." : `Delete ${selected.length} claim${selected.length > 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {denials.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-dashed border-[#D9E0E8] bg-white/60 p-12 text-center">
@@ -586,7 +650,8 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
                     <th className="text-right" style={{ minWidth: 120, textAlign: "right" }}>Denied Amt</th>
                     <th style={{ minWidth: 100 }}>Deadline</th>
                     <th style={{ minWidth: 100 }}>Status</th>
-                    <th style={{ minWidth: 130, paddingRight: 16 }}>Assigned</th>
+                    <th style={{ minWidth: 130 }}>Assigned</th>
+                    <th style={{ width: 80, textAlign: "center", paddingRight: 16 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -613,11 +678,53 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
                       <td style={{ minWidth: 120 }} className="text-right font-mono font-bold text-[#1E2F4D] whitespace-nowrap">{money(claim.billedAmount)}</td>
                       <td style={{ minWidth: 100 }} className="whitespace-nowrap"><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
                       <td style={{ minWidth: 100 }} className="whitespace-nowrap"><StatusBadge status={claim.status} /></td>
-                      <td style={{ minWidth: 130, paddingRight: 16 }}>
+                      <td style={{ minWidth: 130 }}>
                         <div className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
                           <Avatar initials={claim.avatar} tone="blue" size="sm" />
                           <span>{claim.assignedTo}</span>
                         </div>
+                      </td>
+                      <td style={{ width: 80, textAlign: "center", paddingRight: 16 }} onClick={(e) => e.stopPropagation()}>
+                        {confirmDeleteId === claim.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              className="rounded-lg bg-[#C77B7B] px-2 py-1 text-[10px] font-bold text-white hover:bg-[#b06767] transition shadow-sm"
+                              disabled={deletingId === claim.id}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setDeletingId(claim.id);
+                                await onDeleteClaim(claim.id);
+                                if (selected.includes(claim.id)) {
+                                  setSelected(selected.filter((id) => id !== claim.id));
+                                }
+                                setDeletingId(null);
+                                setConfirmDeleteId(null);
+                              }}
+                            >
+                              {deletingId === claim.id ? "..." : "Delete"}
+                            </button>
+                            <button
+                              className="rounded-lg bg-[#E2E8F0] px-1.5 py-1 text-[10px] font-bold text-[#48586B] hover:bg-[#CBD5E1] transition"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteId(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#7C8A9C] hover:bg-[#FDF2F2] hover:text-[#C77B7B] transition mx-auto"
+                            title="Delete claim from worklist"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteId(claim.id);
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1719,7 +1826,18 @@ function Appeals({
   );
 }
 
-function ClaimsLogView({ denials, onOpenClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void }) {
+function ClaimsLogView({
+  denials,
+  onOpenClaim,
+  onDeleteClaim,
+}: {
+  denials: Denial[];
+  onOpenClaim: (id: string) => void;
+  onDeleteClaim?: (id: string) => Promise<void>;
+}) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   return (
     <div className="page-content">
       <SectionHeading
@@ -1743,6 +1861,7 @@ function ClaimsLogView({ denials, onOpenClaim }: { denials: Denial[]; onOpenClai
                 <th className="text-right">Billed Amount</th>
                 <th>CARC Flag</th>
                 <th>Status</th>
+                {onDeleteClaim && <th style={{ width: 80, textAlign: "center", paddingRight: 16 }}>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -1754,6 +1873,47 @@ function ClaimsLogView({ denials, onOpenClaim }: { denials: Denial[]; onOpenClai
                   <td className="text-right font-mono font-bold">{money(d.billedAmount)}</td>
                   <td><span className="carc-code-tag">{d.carcCode}</span></td>
                   <td><StatusBadge status={d.status} /></td>
+                  {onDeleteClaim && (
+                    <td style={{ width: 80, textAlign: "center", paddingRight: 16 }} onClick={(e) => e.stopPropagation()}>
+                      {confirmDeleteId === d.id ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            className="rounded-lg bg-[#C77B7B] px-2 py-1 text-[10px] font-bold text-white hover:bg-[#b06767] transition shadow-sm"
+                            disabled={deletingId === d.id}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              setDeletingId(d.id);
+                              await onDeleteClaim(d.id);
+                              setDeletingId(null);
+                              setConfirmDeleteId(null);
+                            }}
+                          >
+                            {deletingId === d.id ? "..." : "Delete"}
+                          </button>
+                          <button
+                            className="rounded-lg bg-[#E2E8F0] px-1.5 py-1 text-[10px] font-bold text-[#48586B] hover:bg-[#CBD5E1] transition"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteId(null);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-[#7C8A9C] hover:bg-[#FDF2F2] hover:text-[#C77B7B] transition mx-auto"
+                          title="Delete claim log"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(d.id);
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2398,10 +2558,34 @@ export default function Home() {
     setDenials(denials.map(d => d.id === id ? { ...d, status: newStatus } : d));
   };
 
+  const handleDeleteClaim = async (id: string) => {
+    const success = await deleteClaimLog(id);
+    if (success) {
+      localClaimsRef.current = localClaimsRef.current.filter((c) => c.id !== id);
+      setDenials((prev) => prev.filter((c) => c.id !== id));
+      toast.success(`Claim ${id} deleted successfully`);
+    } else {
+      toast.error(`Failed to delete claim ${id}`);
+    }
+  };
+
+  const handleDeleteClaims = async (ids: string[]) => {
+    const results = await Promise.all(ids.map((id) => deleteClaimLog(id)));
+    const successCount = results.filter(Boolean).length;
+    if (successCount > 0) {
+      const idSet = new Set(ids);
+      localClaimsRef.current = localClaimsRef.current.filter((c) => !idSet.has(c.id));
+      setDenials((prev) => prev.filter((c) => !idSet.has(c.id)));
+      toast.success(`${successCount} claim${successCount > 1 ? "s" : ""} deleted from worklist`);
+    } else {
+      toast.error("Failed to delete selected claims");
+    }
+  };
+
   const renderPage = () => {
     if (path === "/dashboard") return <Dashboard onNavigate={setLocation} denials={denials} appeals={appeals} />;
     if (path === "/predict") return <Predict onSaveClaim={handleSaveClaim} />;
-    if (path === "/claims") return <ClaimsLogView denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} />;
+    if (path === "/claims") return <ClaimsLogView denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} onDeleteClaim={handleDeleteClaim} />;
     if (path.startsWith("/claims/")) {
       const targetId = path.split("/")[2];
       return (
@@ -2420,7 +2604,15 @@ export default function Home() {
     if (path === "/payers") return <Payers />;
     if (path === "/analytics") return <Analytics />;
     if (path === "/settings") return <SettingsView />;
-    return <Worklist denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} onScoreClaim={() => setLocation("/predict")} />;
+    return (
+      <Worklist
+        denials={denials}
+        onOpenClaim={(id) => setLocation(`/claims/${id}`)}
+        onScoreClaim={() => setLocation("/predict")}
+        onDeleteClaim={handleDeleteClaim}
+        onDeleteClaims={handleDeleteClaims}
+      />
+    );
   };
 
   return (

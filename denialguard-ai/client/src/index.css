@@ -124,6 +124,7 @@ kbd { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .button-secondary:hover { background: white; }
 .button-ghost { padding: 0 4px; color: var(--blue); background: transparent; }
 .button-danger { color: white; background: var(--coral); }
+.button-danger:hover { background: #b06767; }
 .icon-button { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; border: 1px solid rgba(94,114,140,.15); border-radius: 8px; background: rgba(255,255,255,.5); color: var(--body); }
 .icon-button:hover { background: white; color: var(--ink); }
 .text-button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: var(--blue); border: 0; background: transparent; font-size: 10px; font-weight: 650; }

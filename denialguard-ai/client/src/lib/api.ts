@@ -379,6 +379,19 @@ export async function fetchClaimsLog(): Promise<any[]> {
   }
 }
 
+export async function deleteClaimLog(claimId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/claims-log/${claimId}`, {
+      method: "DELETE",
+      headers: getAuthHeader(),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+
 export async function uploadClaimDocument(
   claimId: string,
   file: File,

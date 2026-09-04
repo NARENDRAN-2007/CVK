@@ -301,6 +301,21 @@ def fetch_claims_log(limit: int = 100) -> List[Dict[str, Any]]:
     return _in_memory_claims_log[:limit]
 
 
+def delete_claim_log(claim_id: str) -> bool:
+    global _in_memory_claims_log
+    _in_memory_claims_log = [c for c in _in_memory_claims_log if c.get("claim_id") != claim_id]
+
+    client = get_supabase()
+    if client and _is_live_mode:
+        try:
+            client.table("claims_log").delete().eq("claim_id", claim_id).execute()
+        except Exception as e:
+            logger.error(f"Failed to delete claim {claim_id} from Supabase: {e}")
+            return False
+    return True
+
+
+
 def insert_claim_document(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     if not doc_data.get("id"):
         doc_data["id"] = f"doc-{uuid.uuid4().hex[:8]}"

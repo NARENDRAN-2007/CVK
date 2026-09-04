@@ -246,6 +246,15 @@ def test_chat_endpoint_evaluates_denial_risk():
     print("Chat AI response correctly incorporates evaluated denial risk data.")
 
 
+def test_delete_claim_log_endpoint(claim_id: str):
+    print(f"\n[TEST 12] Testing DELETE /claims-log/{claim_id} (Authenticated)...")
+    response = client.delete(f"/claims-log/{claim_id}", headers=AUTH_HEADERS)
+    assert response.status_code == 200, f"Error deleting claim: {response.text}"
+    data = response.json()
+    assert data.get("claim_id") == claim_id
+    print(f"Delete claim OK: {data}")
+
+
 if __name__ == "__main__":
     print("=== DENIALGUARD AI BACKEND VERIFICATION SUITE (AUTH + ML + CHAT) ===")
     test_health_endpoint()
@@ -259,5 +268,6 @@ if __name__ == "__main__":
     test_submit_outcome_not_found()
     test_claims_log_endpoint()
     test_chat_endpoint_evaluates_denial_risk()
-    print("\n>>> ALL 11 TESTS PASSED SUCCESSFULLY! <<<")
+    test_delete_claim_log_endpoint(clean_id)
+    print("\n>>> ALL 12 TESTS PASSED SUCCESSFULLY! <<<")
 
