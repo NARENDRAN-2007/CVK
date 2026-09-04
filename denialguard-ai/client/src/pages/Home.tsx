@@ -1575,7 +1575,14 @@ function Appeals({
                   <div className="appeal-card" key={appeal.id}>
                     <div className="appeal-card-top">
                       <span className="appeal-id">{appeal.id}</span>
-                      <span className="level-pill level-1">{appeal.appeal_level}</span>
+                      <div className="flex items-center gap-1.5">
+                        {column.key === "payer_review" && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[#FBF5E6] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.06em] text-[#A07820]">
+                            <Clock3 size={9} /> SLA active
+                          </span>
+                        )}
+                        <span className="level-pill level-1">{appeal.appeal_level}</span>
+                      </div>
                     </div>
                     <strong>{appeal.claim_id}</strong>
                     <span className="appeal-payer">{appeal.payer}</span>
@@ -1584,15 +1591,32 @@ function Appeals({
                     </div>
                     {appeal.notes && <p className="mt-2 text-[11px] text-[#7C8A9C] italic">"{appeal.notes}"</p>}
                     <div className="mt-3 flex gap-1 pt-2 border-t border-[#EEF2F6]">
-                      {column.key !== "submitted" && (
-                        <button onClick={() => handleStatusChange(appeal.id, "submitted")} className="text-[10px] font-bold text-[#5B8CBF] hover:underline">
+                      {column.key === "drafting" && (
+                        <button
+                          onClick={() => handleStatusChange(appeal.id, "submitted")}
+                          className="text-[10px] font-bold text-[#5B8CBF] hover:underline"
+                        >
                           Mark Submitted →
                         </button>
                       )}
                       {column.key === "submitted" && (
-                        <button onClick={() => handleStatusChange(appeal.id, "resolved")} className="text-[10px] font-bold text-[#5FAE93] hover:underline">
+                        <button
+                          onClick={() => handleStatusChange(appeal.id, "payer_review")}
+                          className="text-[10px] font-bold text-[#C9A24B] hover:underline"
+                        >
+                          Move to Payer Review →
+                        </button>
+                      )}
+                      {column.key === "payer_review" && (
+                        <button
+                          onClick={() => handleStatusChange(appeal.id, "resolved")}
+                          className="text-[10px] font-bold text-[#5FAE93] hover:underline"
+                        >
                           Mark Resolved ✓
                         </button>
+                      )}
+                      {column.key === "resolved" && (
+                        <span className="text-[10px] text-[#7C8A9C] italic">Closed this cycle</span>
                       )}
                     </div>
                   </div>
@@ -2281,6 +2305,9 @@ export default function Home() {
   const [denials, setDenials] = useState<Denial[]>([]);
   const [appeals, setAppeals] = useState<AppealItem[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  // Locally-added claims (from Predict page) that haven't been persisted to the server.
+  // We keep them in a ref so polling never wipes them out.
+  const localClaimsRef = useRef<Denial[]>([]);
 
   const path = location.split("?")[0];
 
@@ -2315,7 +2342,10 @@ export default function Home() {
         actualOutcome: row.actual_outcome,
       }));
 
-      setDenials(mappedDenials);
+      // Merge: keep locally-added claims that are not yet reflected in the server list
+      const serverIds = new Set(mappedDenials.map((d) => d.id));
+      const stillLocalOnly = localClaimsRef.current.filter((lc) => !serverIds.has(lc.id));
+      setDenials([...stillLocalOnly, ...mappedDenials]);
       setAppeals(appls);
       setNotifications(notifs);
     } catch (err) {
@@ -2353,8 +2383,15 @@ export default function Home() {
   };
 
   const handleSaveClaim = (claim: Denial) => {
-    setDenials(prev => [claim, ...prev]);
-    loadData();
+    // Add to the local-only list so polling never removes it
+    localClaimsRef.current = [claim, ...localClaimsRef.current.filter((c) => c.id !== claim.id)];
+    setDenials((prev) => {
+      // Avoid duplicates if claim id already exists
+      const exists = prev.some((d) => d.id === claim.id);
+      return exists ? prev : [claim, ...prev];
+    });
+    // Intentionally NOT calling loadData() here — it would overwrite the new claim
+    // before the server has any record of it.
   };
 
   const handleUpdateStatus = (id: string, newStatus: ClaimStatus) => {
