@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import type { LucideIcon } from "lucide-react";
+import { AIChatBox } from "@/components/AIChatBox";
 import {
   predictClaim,
   submitClaimOutcome,
@@ -20,6 +21,8 @@ import {
   saveSecuritySettings,
   generateWorkspaceInvite,
   fetchWorkspaceMembers,
+  sendChatMessageToAPI,
+  type ChatMessage,
   type PredictionResponse,
   type AppealItem,
   type NotificationItem,
@@ -275,9 +278,9 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
   );
 }
 
-function Button({ children, variant = "primary", icon: Icon, className = "", onClick, type = "button" }: { children: React.ReactNode; variant?: "primary" | "secondary" | "ghost" | "danger"; icon?: LucideIcon; className?: string; onClick?: () => void; type?: "button" | "submit" }) {
+function Button({ children, variant = "primary", icon: Icon, className = "", onClick, type = "button", disabled = false }: { children: React.ReactNode; variant?: "primary" | "secondary" | "ghost" | "danger"; icon?: LucideIcon; className?: string; onClick?: () => void; type?: "button" | "submit"; disabled?: boolean }) {
   return (
-    <button type={type} onClick={onClick} className={`ui-button button-${variant} ${variant === "primary" ? "liquid-sheen" : ""} ${className}`}>
+    <button type={type} onClick={onClick} disabled={disabled} className={`ui-button button-${variant} ${variant === "primary" ? "liquid-sheen" : ""} ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${className}`}>
       {Icon && <Icon size={16} strokeWidth={1.8} />}
       {children}
     </button>
@@ -644,6 +647,44 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
     daysToDeadline: "45",
   });
 
+  // AI Chatbot State
+  const [apiLink] = useState(() => (import.meta as any).env?.VITE_AI_CHATBOT_API_URL || "/api/chat");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      role: "assistant",
+      content: "👋 **Welcome to the AI Data Assistant!** I am live and ready to explain everything about your current claim, SHAP drivers, CARC codes, and risk mitigation strategies.",
+    },
+  ]);
+  const [chatLoading, setChatLoading] = useState(false);
+
+  const handleSendChatMessage = async (userPrompt: string) => {
+    if (!userPrompt.trim() || chatLoading) return;
+    const newMessages: ChatMessage[] = [
+      ...chatMessages,
+      { role: "user", content: userPrompt },
+    ];
+    setChatMessages(newMessages);
+    setChatLoading(true);
+
+    try {
+      const responseText = await sendChatMessageToAPI(apiLink, newMessages, { form, result });
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: responseText },
+      ]);
+    } catch (err: any) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `⚠️ Could not retrieve AI response: ${err.message || "Network error"}. Please check your API link endpoint.`,
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   const loadPreset = (presetType: "high_risk" | "clean" | "filing_limit" | "missing_doc") => {
     if (presetType === "high_risk") {
       setForm({
@@ -720,6 +761,24 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
       toast.success("Denial prediction complete", {
         description: `Risk score: ${res.denialRiskScore.toFixed(1)}% | CARC Code: ${res.predictedCarcCode}`,
       });
+
+      // Automatically post AI Chatbot explanation for the evaluated denial risk
+      const scorePct = res.denialRiskScore.toFixed(1);
+      const topDriver = res.topContributingFactors?.[0];
+      const driverText = topDriver ? `${topDriver.label} (+${(topDriver.impact * 100).toFixed(1)}% risk)` : "Attribute Variance";
+
+      const autoAiAnalysis = `📊 **Denial Risk Scoring Complete!**\n\n` +
+        `- **Evaluated Denial Risk:** **${scorePct}%**\n` +
+        `- **Predicted CARC Reason:** \`${res.predictedCarcCode}\`\n` +
+        `- **Claim Context:** ${form.payer} (${form.providerSpecialty}) | CPT \`${form.cpt}\` / ICD-10 \`${form.icd10}\` | Billed: $${Number(form.chargeAmount || 0).toLocaleString()}\n` +
+        `- **Primary Risk Driver:** ${driverText}\n\n` +
+        `> 💡 **Recommended Fix:** ${res.suggestedCorrectiveAction}\n\n` +
+        `Ask me any question below about this evaluated risk score, SHAP attribution drivers, or billing fixes!`;
+
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: autoAiAnalysis },
+      ]);
     } catch (err: any) {
       toast.error("Prediction failed", { description: err.message });
     } finally {
@@ -758,27 +817,31 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
   };
 
   return (
-    <div className="page-content predict-page">
+    <div className="page-content predict-page space-y-6">
       <SectionHeading
         eyebrow="Pre-submission Intelligence"
-        title="Predict denial risk"
+        title="Predict denial risk & AI Assistant"
         description="Score claim attributes against XGBoost + SHAP before transmitting EDI 837."
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Quick presets:</span>
-        <button onClick={() => loadPreset("high_risk")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
-          🚨 High-Risk Ortho (CO-197)
-        </button>
-        <button onClick={() => loadPreset("clean")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
-          ✅ Clean Cardiology (Passed)
-        </button>
-        <button onClick={() => loadPreset("filing_limit")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
-          ⏳ Timely Filing Warning (CO-29)
-        </button>
-        <button onClick={() => loadPreset("missing_doc")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
-          📄 Missing Chart Notes (CO-16)
-        </button>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Quick presets:</span>
+          <button onClick={() => loadPreset("high_risk")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+            🚨 High-Risk Ortho (CO-197)
+          </button>
+          <button onClick={() => loadPreset("clean")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+            ✅ Clean Cardiology (Passed)
+          </button>
+          <button onClick={() => loadPreset("filing_limit")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+            ⏳ Timely Filing Warning (CO-29)
+          </button>
+          <button onClick={() => loadPreset("missing_doc")} className="rounded-xl border border-[#D9E0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1E2F4D] hover:border-[#5B8CBF]">
+            📄 Missing Chart Notes (CO-16)
+          </button>
+        </div>
+
+        {/* API Link Settings Toggle */}
       </div>
 
       <div className="predict-grid">
@@ -862,63 +925,101 @@ function Predict({ onSaveClaim }: { onSaveClaim: (claim: Denial) => void }) {
           </div>
         </form>
 
-        <section className="predict-result panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Explainable AI</span>
-              <h2>Prediction & Root Causes</h2>
+        <section className="predict-result panel flex flex-col justify-between">
+          <div>
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Explainable AI</span>
+                <h2>Prediction & Root Causes</h2>
+              </div>
             </div>
-          </div>
 
-          {result ? (
-            <div className="space-y-5 p-2">
-              <div className="flex items-center justify-between rounded-2xl bg-[#EEF2F6] p-4">
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Predicted Denial Risk</div>
-                  <div className="font-serif text-[42px] leading-tight text-[#1E2F4D]">
-                    {result.denialRiskScore.toFixed(1)}%
+            {result ? (
+              <div className="space-y-5 p-2">
+                <div className="flex items-center justify-between rounded-2xl bg-[#EEF2F6] p-4">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Predicted Denial Risk</div>
+                    <div className="font-serif text-[42px] leading-tight text-[#1E2F4D]">
+                      {result.denialRiskScore.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Likely CARC</div>
+                    <div className="font-mono text-[22px] font-bold text-[#C77B7B]">{result.predictedCarcCode}</div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7C8A9C]">Likely CARC</div>
-                  <div className="font-mono text-[22px] font-bold text-[#C77B7B]">{result.predictedCarcCode}</div>
+
+                <div>
+                  <h4 className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Top Contributing SHAP Factors</h4>
+                  <div className="mt-2 space-y-2">
+                    {result.topContributingFactors.map((f, i) => (
+                      <div key={i} className="flex items-center justify-between rounded-xl border border-[#DDE4EC] bg-white p-2.5 text-[12px]">
+                        <span className="font-medium text-[#1E2F4D]">{f.label}</span>
+                        <span className={`font-mono font-bold ${f.direction === "positive" || f.direction === "increases_risk" ? "text-[#C77B7B]" : "text-[#5FAE93]"}`}>
+                          {f.direction === "positive" || f.direction === "increases_risk" ? `+${f.impact.toFixed(2)}` : `-${Math.abs(f.impact).toFixed(2)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#5B8CBF]/30 bg-[#5B8CBF]/10 p-3 text-[12px] text-[#1E2F4D]">
+                  <strong>Suggested Fix:</strong>
+                  <p className="mt-1 text-[#48586B]">{result.suggestedCorrectiveAction}</p>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button icon={Plus} onClick={saveToQueue}>Save to Worklist</Button>
                 </div>
               </div>
-
-              <div>
-                <h4 className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#7C8A9C]">Top Contributing SHAP Factors</h4>
-                <div className="mt-2 space-y-2">
-                  {result.topContributingFactors.map((f, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-xl border border-[#DDE4EC] bg-white p-2.5 text-[12px]">
-                      <span className="font-medium text-[#1E2F4D]">{f.label}</span>
-                      <span className={`font-mono font-bold ${f.direction === "positive" || f.direction === "increases_risk" ? "text-[#C77B7B]" : "text-[#5FAE93]"}`}>
-                        {f.direction === "positive" || f.direction === "increases_risk" ? `+${f.impact.toFixed(2)}` : `-${Math.abs(f.impact).toFixed(2)}`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+            ) : (
+              <div className="p-12 text-center text-[#7C8A9C]">
+                <Target size={32} className="mx-auto mb-3 text-[#5B8CBF]/40" />
+                <p className="text-[13px]">Configure claim parameters and click "Evaluate Denial Risk" to run inference.</p>
               </div>
-
-              <div className="rounded-xl border border-[#5B8CBF]/30 bg-[#5B8CBF]/10 p-3 text-[12px] text-[#1E2F4D]">
-                <strong>Suggested Fix:</strong>
-                <p className="mt-1 text-[#48586B]">{result.suggestedCorrectiveAction}</p>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button icon={Plus} onClick={saveToQueue}>Save to Worklist</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="p-12 text-center text-[#7C8A9C]">
-              <Target size={32} className="mx-auto mb-3 text-[#5B8CBF]/40" />
-              <p className="text-[13px]">Configure claim parameters and click "Evaluate Denial Risk" to run inference.</p>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       </div>
+
+      {/* AI Data Explainer Chatbot Section */}
+      <section className="panel p-5 mt-6 border-t border-[#DDE4EC] rounded-2xl bg-white shadow-sm">
+        <div className="flex items-center justify-between mb-4 border-b border-[#EEF2F6] pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-[#5B8CBF]/10 text-[#5B8CBF]">
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <h3 className="text-[16px] font-bold text-[#1E2F4D]">AI Claim Data Explainer</h3>
+              <p className="text-[12px] text-[#7C8A9C]">Ask anything about your form parameters, SHAP factors, CARC codes, or API link</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              {apiLink ? "External API Link Active" : "Smart RCM AI Ready"}
+            </span>
+          </div>
+        </div>
+
+        <AIChatBox
+          messages={chatMessages}
+          onSendMessage={handleSendChatMessage}
+          isLoading={chatLoading}
+          height="450px"
+          placeholder="Ask AI to explain risk factors, billing codes, or remediations..."
+          suggestedPrompts={[
+            "Explain why this claim is flagged as high risk",
+            "How do I lower the denial probability?",
+            "Break down the predicted CARC code & rules",
+            "What clinical documentation should I attach?",
+          ]}
+        />
+      </section>
     </div>
   );
 }
+
 
 const getPriorityInfo = (days: number) => {
   const d = Math.max(0, Math.round(Number(days) || 0));

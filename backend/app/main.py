@@ -12,6 +12,7 @@ from .routers.workspace import router as workspace_router
 from .routers.documents import router as documents_router
 from .routers.appeals import router as appeals_router
 from .routers.notifications import router as notifications_router
+from .routers.chat import router as chat_router
 
 load_dotenv()
 
@@ -52,6 +53,7 @@ app.include_router(notifications_router)
 app.include_router(predict_router)
 app.include_router(submit_outcome_router)
 app.include_router(claims_log_router)
+app.include_router(chat_router)
 
 
 @app.get("/", tags=["Health"])

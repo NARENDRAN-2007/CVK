@@ -208,8 +208,46 @@ def test_claims_log_endpoint():
     print(f"Sample log entry: claim_id={logs[0].get('claim_id')}, risk_score={logs[0].get('predicted_risk_score')}")
 
 
+def test_chat_endpoint_evaluates_denial_risk():
+    print("\n[TEST 11] Testing POST /api/chat with evaluated denial risk context...")
+    payload = {
+        "messages": [
+            {"role": "user", "content": "Explain why this claim was flagged and how to fix it."}
+        ],
+        "claimContext": {
+            "form": {
+                "payer": "UnitedHealthcare",
+                "providerSpecialty": "Orthopedics",
+                "cpt": "27447",
+                "icd10": "M17.11",
+                "paStatus": "Missing",
+                "chargeAmount": 18450,
+                "daysToDeadline": 45
+            },
+            "result": {
+                "denialRiskScore": 0.885,
+                "predictedCarcCode": "CO-197",
+                "suggestedCorrectiveAction": "Verify prior authorization approval number before electronic clearinghouse submission.",
+                "topContributingFactors": [
+                    {"label": "Prior Authorization Missing", "impact": 0.45},
+                    {"label": "Out-of-Network Provider", "impact": 0.25}
+                ]
+            }
+        }
+    }
+    response = client.post("/api/chat", json=payload)
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    data = response.json()
+    assert "response" in data
+    text = data["response"]
+    print("Chat AI Response received successfully.")
+    assert "88.5%" in text or "89%" in text or "Denial Risk" in text or "denial" in text.lower()
+    assert "CO-197" in text or "Prior Authorization" in text or "authorization" in text.lower()
+    print("Chat AI response correctly incorporates evaluated denial risk data.")
+
+
 if __name__ == "__main__":
-    print("=== DENIALGUARD AI BACKEND VERIFICATION SUITE (AUTH + ML) ===")
+    print("=== DENIALGUARD AI BACKEND VERIFICATION SUITE (AUTH + ML + CHAT) ===")
     test_health_endpoint()
     test_auth_login_success()
     test_auth_login_invalid_credentials()
@@ -220,4 +258,6 @@ if __name__ == "__main__":
     test_submit_outcome(high_risk_id)
     test_submit_outcome_not_found()
     test_claims_log_endpoint()
-    print("\n>>> ALL 10 TESTS PASSED SUCCESSFULLY! <<<")
+    test_chat_endpoint_evaluates_denial_risk()
+    print("\n>>> ALL 11 TESTS PASSED SUCCESSFULLY! <<<")
+
