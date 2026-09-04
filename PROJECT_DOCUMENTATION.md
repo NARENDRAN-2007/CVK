@@ -18,9 +18,9 @@ DenialGuard AI halts claim denials before claims leave the hospital electronic h
 2. **Exact Root Cause Attribution (SHAP TreeExplainer):** Explains precisely which specific clinical and billing attributes elevated or lowered risk.
 3. **SHAP-Driven CARC Code Forecasting:** Predicts the exact Claim Adjustment Reason Code (e.g., `CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`, `CO-45`) tied directly to the top-weighted risk-increasing SHAP driver.
 4. **Actionable Remediation Engine:** Offers targeted, prescriptive fixes (e.g., attaching required clinical chart notes, acquiring prior authorization reference numbers, adjusting NCCI modifiers).
-5. **Strict Schema & Vocabulary Normalization:** Canonicalized vocabularies enforced by Pydantic `Literal[...]` types across frontend and backend for all categorical attributes (`pa_status`, `referral_status`, `network_status`, `eligibility_status`, `payer`, `provider_specialty`, `plan_type`).
+5. **Strict Schema & Vocabulary Normalization:** Canonicalized vocabularies enforced by Pydantic `Literal[...]` types across frontend and backend for all categorical attributes (`pa_status`, `referral_status`, `network_status`, `eligibility_status`, `payer`, `provider_specialty`, `plan_type`, `role`).
 6. **CPT+Payer Normalized Deviation:** `claim_amount_deviation` engineered feature keyed by `CPT + Payer` and normalized as a percentage deviation from historical benchmark means.
-7. **Native Document Ingestion & Persistent Storage (`claim_documents`):** Ingests PDF/TIFF clinical files directly into Supabase PostgreSQL, automatically re-running the ML model and updating the claim state in real time.
+7. **Native Document Ingestion & Real-Time Re-Scoring (`claim_documents`):** Ingests PDF/TIFF clinical files across both the Claim Details view (`/claims/:id`) and the Prioritized Worklist (`/worklist`). Attaching clinical documentation automatically flips `documentation_flag = True`, triggers instant ML re-scoring via `predict_claim()`, updates `claims_log` in place, displays a transient `"Re-scoring..."` pulse badge, triggers high-risk notifications if risk $\ge 60\%$, and renders before-and-after Sonner toast notifications (e.g., `Claim re-scored: 100% → 26.5% (Low Risk)`).
 8. **Appeals Pipeline & Live Document Count:** Full multi-stage appeal tracking (`Drafting`, `Submitted`, `Payer Review`, `Resolved`) with dynamic document counts live-derived from `claim_documents`.
 9. **Duplicate & Clean Claim Appeal Prevention Guards:** Rejects duplicate active appeals with `HTTP 409 Conflict` and prevents creating appeals on clean claims (`predicted_carc_code == 'CLEAN'`) with `HTTP 400 Bad Request`, paired with frontend disabled states and modal guards.
 10. **Dedicated Vertical Claim Timeline & Localized Timestamps:** Clean vertical step layout where each event occupies its own dedicated row with vertical node connectors, eliminating visual overlap, with UTC ISO persistence and localized timezone formatting.
@@ -38,7 +38,7 @@ graph TD
     subgraph FrontendTier ["Frontend Tier (React 19 + TypeScript + Vite + Wouter)"]
         UI["DenialGuard Web App (:3000)"]
         AuthUI["Auth & Onboarding (/sign-in, /create-account)"]
-        WorklistUI["Prioritized Worklist & Triage (/worklist)"]
+        WorklistUI["Prioritized Worklist & Evidence Upload (/worklist)"]
         PredictUI["Pre-Submission Claim Scoring (/predict)"]
         DetailUI["Claim Detail & Dynamic Timeline (/claims/:id)"]
         AppealsUI["Appeals Pipeline Kanban (/appeals)"]
@@ -63,18 +63,15 @@ graph TD
         RuleEngine["SHAP-Driven CARC & Remediation Engine"]
     end
 
-    subgraph PersistenceTier ["Persistence & Storage Layer"]
+    subgraph PersistenceTier ["Persistence & Storage Layer (Dual-Mode Router app/db.py)"]
         DBRouter["Dual-Mode Storage Adapter (app/db.py)"]
-        SupabaseDB[("Supabase PostgreSQL")]
-        WorkspacesTable["workspaces Table"]
-        UsersTable["users Table"]
-        InvitesTable["workspace_invites Table"]
+        SupabaseDB[("Live Supabase PostgreSQL")]
+        UsersTable["users Table (UUID PK, role CHECK)"]
         ClaimsTable["claims_log Table (NUMERIC(10,2) Precision)"]
         DocsTable["claim_documents Table (Persistent Uploads)"]
         AppealsTable["appeals Table"]
         NotifsTable["notifications Table"]
-        SettingsTable["workspace_settings Table"]
-        InMemoryStore[("Clean In-Memory Store (Zero-Crash Fallback)")]
+        InMemoryStore[("Thread-Safe In-Memory Store (workspaces, invites, settings fallback)")]
     end
 
     UI -->|HTTP / REST + Bearer JWT| API
@@ -82,7 +79,7 @@ graph TD
     PredictUI -->|POST /predict| API
     DetailUI -->|POST /claims/:id/documents, GET /claims/:id/documents| API
     DetailUI -->|POST /appeals, POST /submit-outcome| API
-    WorklistUI -->|GET /claims-log| API
+    WorklistUI -->|GET /claims-log, POST /claims/:id/documents| API
     AppealsUI -->|GET /appeals, POST /appeals, PATCH /appeals/:id/status| API
     NotifUI -->|GET /notifications, POST /notifications/:id/read| API
     SettingsUI -->|GET /workspace/members, POST /workspace/invite, GET/POST /workspace/settings| API
@@ -98,16 +95,13 @@ graph TD
     RuleEngine --> API
 
     API --> DBRouter
-    DBRouter -->|Cloud Mode| SupabaseDB
-    SupabaseDB --> WorkspacesTable
+    DBRouter -->|Live Cloud Mode| SupabaseDB
     SupabaseDB --> UsersTable
-    SupabaseDB --> InvitesTable
     SupabaseDB --> ClaimsTable
     SupabaseDB --> DocsTable
     SupabaseDB --> AppealsTable
     SupabaseDB --> NotifsTable
-    SupabaseDB --> SettingsTable
-    DBRouter -->|Fallback Mode| InMemoryStore
+    DBRouter -->|Adapter & Fallback| InMemoryStore
 ```
 
 ---
@@ -128,7 +122,7 @@ graph TD
 | **Explainability (XAI)**| SHAP | `>=0.45.0` | TreeExplainer providing per-claim Shapley attribution values |
 | **Authentication & RBAC**| PyJWT + Passlib/BCrypt | `>=2.8.0` | Stateless JWT Bearer tokens with 24-hour expiration & strict bcrypt verification |
 | **Data Validation** | Pydantic v2 | `>=2.6.0` | Strict type validation with `Literal[...]` categories & `decimal.Decimal` monetary precision |
-| **Persistence** | Supabase (PostgreSQL) | `>=2.3.0` | Cloud PostgreSQL with dedicated `claims_log`, `appeals`, `claim_documents`, `notifications` tables |
+| **Persistence** | Supabase (PostgreSQL) | `>=2.3.0` | Cloud PostgreSQL with dedicated `users`, `claims_log`, `appeals`, `claim_documents`, `notifications` |
 
 ---
 
@@ -136,16 +130,17 @@ graph TD
 
 To prevent vocabulary divergence across layers, the platform strictly enforces canonical string vocabularies:
 
-| Field | Canonical Values | Pydantic Type |
-| :--- | :--- | :--- |
-| `pa_status` | `"Approved"`, `"Denied"`, `"Missing"`, `"Pending"`, `"Not Required"` | `Literal[...]` |
-| `referral_status` | `"Active"`, `"Missing"`, `"Not Required"`, `"Expired"` | `Literal[...]` |
-| `network_status` | `"In-Network"`, `"Out-of-Network"` | `Literal[...]` |
-| `eligibility_status` | `"Active"`, `"Inactive"`, `"Pending"`, `"Terminated"` | `Literal[...]` |
-| `payer` | `"Medicare"`, `"Medicaid"`, `"UnitedHealthcare"`, `"BlueCross"`, `"Aetna"`, `"Cigna"`, `"Humana"` | `Literal[...]` |
-| `plan_type` | `"HMO"`, `"PPO"`, `"EPO"`, `"POS"`, `"Medicare Advantage"`, `"Commercial"` | `Literal[...]` |
-| `claim_type` | `"Professional"`, `"Institutional"`, `"Dental"`, `"Vision"` | `Literal[...]` |
-| `provider_specialty` | `"Cardiology"`, `"Orthopedics"`, `"General Practice"`, `"Dermatology"`, `"Oncology"`, `"Radiology"`, `"Neurology"`, `"Internal Medicine"`, `"Emergency Medicine"` | `Literal[...]` |
+| Field | Canonical Values | Pydantic Type | Notes / Database Handling |
+| :--- | :--- | :--- | :--- |
+| `role` | `"Admin"`, `"Analyst"`, `"Biller"` | `Literal["Admin", "Analyst", "Biller", "Denial Analyst"]` | Displayed as `"Denial Analyst"` in UI; stored canonically as `"Analyst"` in DB. Required on registration. |
+| `pa_status` | `"Approved"`, `"Denied"`, `"Missing"`, `"Pending"`, `"Not Required"` | `Literal[...]` | Prior authorization status |
+| `referral_status` | `"Active"`, `"Missing"`, `"Not Required"`, `"Expired"` | `Literal[...]` | PCP referral state |
+| `network_status` | `"In-Network"`, `"Out-of-Network"` | `Literal[...]` | Provider network affiliation |
+| `eligibility_status` | `"Active"`, `"Inactive"`, `"Pending"`, `"Terminated"` | `Literal[...]` | Patient coverage verification status |
+| `payer` | `"Medicare"`, `"Medicaid"`, `"UnitedHealthcare"`, `"BlueCross"`, `"Aetna"`, `"Cigna"`, `"Humana"` | `Literal[...]` | Primary adjudication carrier |
+| `plan_type` | `"HMO"`, `"PPO"`, `"EPO"`, `"POS"`, `"Medicare Advantage"`, `"Commercial"` | `Literal[...]` | Health insurance plan classification |
+| `claim_type` | `"Professional"`, `"Institutional"`, `"Dental"`, `"Vision"` | `Literal[...]` | Standard billing form categorization |
+| `provider_specialty` | `"Cardiology"`, `"Orthopedics"`, `"General Practice"`, `"Dermatology"`, `"Oncology"`, `"Radiology"`, `"Neurology"`, `"Internal Medicine"`, `"Emergency Medicine"` | `Literal[...]` | Clinical provider taxonomy |
 
 ---
 
@@ -177,7 +172,17 @@ When a claim score is evaluated, `determine_carc_and_action()` consults `top_fac
 ## 6. Database Schema (Supabase PostgreSQL)
 
 ```sql
--- 1. Claims Log Table
+-- 1. Users Table
+CREATE TABLE IF NOT EXISTS public.users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    work_email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    name TEXT,
+    role TEXT NOT NULL DEFAULT 'Biller' CHECK (role IN ('Admin', 'Analyst', 'Biller')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Claims Log Table
 CREATE TABLE IF NOT EXISTS public.claims_log (
     id SERIAL PRIMARY KEY,
     claim_id TEXT UNIQUE NOT NULL,
@@ -214,7 +219,7 @@ CREATE TABLE IF NOT EXISTS public.claims_log (
     outcome_submitted_at TIMESTAMPTZ
 );
 
--- 2. Appeals Table
+-- 3. Appeals Table
 CREATE TABLE IF NOT EXISTS public.appeals (
     id TEXT PRIMARY KEY,
     workspace_id TEXT DEFAULT 'ws-northstar-001',
@@ -228,7 +233,7 @@ CREATE TABLE IF NOT EXISTS public.appeals (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. Claim Documents Table
+-- 4. Claim Documents Table
 CREATE TABLE IF NOT EXISTS public.claim_documents (
     id TEXT PRIMARY KEY,
     claim_id TEXT NOT NULL,
@@ -241,7 +246,7 @@ CREATE TABLE IF NOT EXISTS public.claim_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_claim_documents_claim ON public.claim_documents(claim_id);
 
--- 4. Notifications Table
+-- 5. Notifications Table
 CREATE TABLE IF NOT EXISTS public.notifications (
     id TEXT PRIMARY KEY,
     workspace_id TEXT DEFAULT 'ws-northstar-001',
@@ -260,11 +265,11 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 
 | Test Suite | Execution Command | Purpose & Coverage |
 | :--- | :--- | :--- |
+| **Fixes & Feature Verification** | `python backend/test_fixes_verification.py` | Validates registration role validation (Pydantic Literal, missing/invalid rejected, valid roles accepted) and Worklist in-place document upload, ML re-scoring, documentation flag update, and response payloads. |
+| **Backend Integration Suite** | `python backend/test_backend.py` | Tests all FastAPI endpoints, JWT auth rejection, SHAP latency, outcome submission, and claim logs (10/10 automated assertions). |
 | **Three Issues Verification** | `python test_three_issues.py` | Validates docs attached live count, duplicate appeal 409 guard, and timeline local date/time formatting. |
 | **Supabase Documents E2E** | `python test_supabase_documents_e2e.py` | Validates complete persistent document lifecycle (upload, Supabase DB row check, cross-user visibility, Kanban count, timeline display). |
 | **Duplicate Appeal Timeline Isolation** | `python test_duplicate_timeline_isolation.py` | Confirms that rejected 409 duplicate appeal attempts generate 0 DB rows, 0 notifications, and 0 phantom timeline events. |
-| **Comprehensive Fixes Verification** | `python test_fixes_verification.py` | Validates SHAP CARC rules, canonical vocabularies, percentage deviation, and appeal creation. |
-| **Backend Integration Suite** | `python backend/test_backend.py` | Tests all FastAPI endpoints, JWT auth rejection, SHAP latency, outcome submission, and claim logs. |
 
 ---
 
@@ -274,7 +279,6 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
-python app/model/train.py  # Optional: retrain model & lookups
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 - Interactive Swagger API Documentation: `http://127.0.0.1:8000/docs`
@@ -291,9 +295,9 @@ pnpm dev
 
 ## 9. Default Test Credentials
 
-| Account Role | Email Address | Password | Workspace | Access Scope |
-| :--- | :--- | :--- | :--- | :--- |
-| **Admin** | `admin@denialguard.com` | `password123` | Northstar Health System | Full administration, invite generation & compliance logs |
-| **Denial Analyst** | `malvarez@northstar.health` | `password123` | Northstar Health System | Risk analysis, clinical appeals & adjudication |
-| **Biller** | `jlee@northstar.health` | `password123` | Northstar Health System | Pre-submission scoring, charge review & claim triage |
-| **Biller** | `biller@denialguard.com` | `password123` | Northstar Health System | Pre-submission scoring & claim remediation |
+| Account Name | Email Address | Password | Database Role | UI Display Label | Access Scope |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Alice Admin** | `admin@denialguard.com` | `password123` | `Admin` | Admin | Full administration, invite generation & compliance logs |
+| **Maya Alvarez** | `malvarez@northstar.health` | `password123` | `Analyst` | Denial Analyst | Risk analysis, clinical appeals & adjudication |
+| **Jordan Lee** | `jlee@northstar.health` | `password123` | `Biller` | Biller | Pre-submission scoring, charge review & claim triage |
+| **Bob Biller** | `biller@denialguard.com` | `password123` | `Biller` | Biller | Pre-submission scoring & claim remediation |

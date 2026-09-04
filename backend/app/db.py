@@ -180,6 +180,17 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     return _in_memory_users.get(normalized_email)
 
 
+def _sanitize_user_row_for_supabase(d: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_cols = {"id", "work_email", "password_hash", "name", "role", "created_at"}
+    out = {}
+    for k, v in d.items():
+        if k in allowed_cols:
+            out[k] = v
+    if "name" not in out and "full_name" in d:
+        out["name"] = d["full_name"]
+    return _deep_sanitize(out)
+
+
 def insert_user(user_data: Dict[str, Any]) -> bool:
     normalized_email = user_data.get("work_email", "").strip().lower()
     _in_memory_users[normalized_email] = user_data
@@ -187,7 +198,7 @@ def insert_user(user_data: Dict[str, Any]) -> bool:
     client = get_supabase()
     if client and _is_live_mode:
         try:
-            sanitized = _deep_sanitize(user_data)
+            sanitized = _sanitize_user_row_for_supabase(user_data)
             client.table("users").insert(sanitized).execute()
             return True
         except Exception as e:

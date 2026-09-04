@@ -10,12 +10,12 @@
 - 🔬 **SHAP TreeExplainer Attribution:** Exact mathematical attribution for why a claim is flagged as high-risk.
 - 🏷️ **SHAP-Driven CARC Prediction:** Identifies the likely denial reason (`CO-197`, `CO-16`, `CO-27`, `CO-29`, `CO-50`, `CO-97`, `CO-4`, `CO-45`) tied directly to the top SHAP driver.
 - 🛠️ **1-Click Clinical/Billing Fixes:** Actionable pre-submission fixes (prior auth numbers, clinical notes, NCCI modifier correction, fee schedule adjustments).
-- 📁 **Persistent Document Lifecycle (`claim_documents`):** PDF/TIFF clinical record uploads with cloud Supabase persistence, auto-reprediction, and live document counting.
+- 📁 **Persistent Document Lifecycle & Real-Time Re-Scoring:** Upload clinical evidence directly in both the Claim Detail view and the Worklist triage table; automatically updates `documentation_flag = True` and re-runs model inference in place.
 - 🛡️ **Duplicate Appeal Protection (409 Conflict):** Prevents duplicate appeals on active claims with atomic server-side guards and frontend state tracking.
 - ⏱️ **Dynamic Localized Claim Timeline:** Real-time lifecycle audit trail with timezone-aware date parsing and UTC ISO persistence.
 - 📈 **Normalized CPT+Payer Deviation:** Percentage-based `claim_amount_deviation` feature computed against historical procedure/payer means.
 - 📋 **Prioritized Worklist & Appeals Pipeline:** Intelligent claim triage queue and deadline-aware appeal pipeline with real DB persistence.
-- 🔐 **JWT RBAC & Dual-Mode Persistence:** Secure Supabase PostgreSQL persistence with zero-downtime offline fallback.
+- 🔐 **JWT RBAC & Dual-Mode Persistence:** Secure Supabase PostgreSQL persistence with zero-downtime offline fallback and required role selection on registration (`Admin`, `Analyst`, `Biller`).
 
 ---
 
@@ -41,7 +41,7 @@ graph TD
 
     subgraph Data & Storage
         API --> DBRouter["Dual-Mode DB Router (app/db.py)"]
-        DBRouter --> Supabase[("Supabase PostgreSQL (claims_log, appeals, claim_documents, notifications)")]
+        DBRouter --> Supabase[("Supabase PostgreSQL (users, claims_log, appeals, claim_documents, notifications)")]
         DBRouter --> MemoryQueue[("Resilient In-Memory Queue")]
     end
 ```
@@ -65,9 +65,9 @@ cd backend
 python -m pip install -r requirements.txt
 python -u test_fixes_verification.py
 python -u test_backend.py
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-- Swagger API Docs: `http://localhost:8000/docs`
+- Swagger API Docs: `http://127.0.0.1:8000/docs`
 
 ### 2. Launch Frontend Dashboard
 ```powershell
@@ -75,17 +75,17 @@ cd denialguard-ai
 pnpm install
 pnpm dev
 ```
-- Web Application: `http://localhost:3000`
+- Web Application: `http://127.0.0.1:3000`
 
 ---
 
 ## 👥 Default Test Accounts
-| Email | Password | Name | Role |
-| :--- | :--- | :--- | :--- |
-| `admin@denialguard.com` | `password123` | Alice Admin | `Admin` |
-| `malvarez@northstar.health` | `password123` | Maya Alvarez | `Analyst` |
-| `jlee@northstar.health` | `password123` | Jordan Lee | `Biller` |
-| `biller@denialguard.com` | `password123` | Bob Biller | `Biller` |
+| Email | Password | Name | Database Role | UI Display Label |
+| :--- | :--- | :--- | :--- | :--- |
+| `admin@denialguard.com` | `password123` | Alice Admin | `Admin` | Admin |
+| `malvarez@northstar.health` | `password123` | Maya Alvarez | `Analyst` | Denial Analyst |
+| `jlee@northstar.health` | `password123` | Jordan Lee | `Biller` | Biller |
+| `biller@denialguard.com` | `password123` | Bob Biller | `Biller` | Biller |
 
 ---
 
@@ -95,4 +95,3 @@ pnpm dev
 - **Recall-Optimized Regime ($T = 0.25$):** Recall: **`84.84%`** | Precision: **`41.10%`**
 - **CARC Multi-Class Accuracy:** **`88.0%`** across 8 reason categories
 - **Inference Latency:** `27.3ms – 72.7ms` (SLA: `< 110ms`)
-

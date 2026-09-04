@@ -120,6 +120,8 @@ export type Denial = {
   submissionDate?: string;
   dos?: string;
   actualOutcome?: string;
+  riskScore?: number;
+  documentationFlag?: boolean;
 };
 
 const formatLocalTimestamp = (isoOrDateStr?: string): string => {
@@ -254,6 +256,50 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`status-badge ${item.className}`}>
       <span className={`status-dot ${item.dot}`} />
       {item.label}
+    </span>
+  );
+}
+
+function RiskBadge({ score, isRescoring }: { score?: number; isRescoring?: boolean }) {
+  if (isRescoring) {
+    return (
+      <span className="status-badge badge-appealed animate-pulse font-medium">
+        <span className="status-dot bg-[#8B7EC8] animate-ping" />
+        Re-scoring...
+      </span>
+    );
+  }
+
+  if (score === undefined || score === null) {
+    return (
+      <span className="status-badge badge-neutral">
+        <span className="status-dot bg-[#7C8A9C]" />
+        Unscored
+      </span>
+    );
+  }
+
+  const rounded = score.toFixed(1);
+  if (score < 35) {
+    return (
+      <span className="status-badge badge-paid">
+        <span className="status-dot bg-[#5FAE93]" />
+        {rounded}% · Clean
+      </span>
+    );
+  }
+  if (score < 60) {
+    return (
+      <span className="status-badge badge-pending">
+        <span className="status-dot bg-[#C9A24B]" />
+        {rounded}% · Review
+      </span>
+    );
+  }
+  return (
+    <span className="status-badge badge-denied">
+      <span className="status-dot bg-[#C77B7B]" />
+      {rounded}% · High Risk
     </span>
   );
 }
@@ -493,12 +539,87 @@ function Dashboard({ onNavigate, denials, appeals }: { onNavigate: (path: string
   );
 }
 
-function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; onOpenClaim: (id: string) => void; onScoreClaim: () => void }) {
+function Worklist({
+  denials,
+  onOpenClaim,
+  onScoreClaim,
+  onUpdateClaim,
+  onRefresh,
+}: {
+  denials: Denial[];
+  onOpenClaim: (id: string) => void;
+  onScoreClaim: () => void;
+  onUpdateClaim?: (id: string, patch: Partial<Denial>) => void;
+  onRefresh?: () => void;
+}) {
   const [payer, setPayer] = useState("all");
   const [aging, setAging] = useState("all");
   const [assignee, setAssignee] = useState("all");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [rescoringMap, setRescoringMap] = useState<Record<string, boolean>>({});
+  const activeUploadClaimId = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const triggerUpload = (e: React.MouseEvent, claimId: string) => {
+    e.stopPropagation();
+    activeUploadClaimId.current = claimId;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const claimId = activeUploadClaimId.current;
+    if (!file || !claimId) return;
+    e.target.value = "";
+
+    setRescoringMap((prev) => ({ ...prev, [claimId]: true }));
+    try {
+      const res = await uploadClaimDocument(claimId, file, "clinical_chart_note");
+      const targetClaim = denials.find((d) => d.id === claimId);
+      const oldScore = targetClaim?.riskScore ?? (targetClaim?.carcCode === "CLEAN" ? 25 : 75);
+      const newScore =
+        res.new_prediction?.risk_score ??
+        res.updated_claim?.predicted_risk_score ??
+        28;
+      const newTier =
+        newScore >= 60
+          ? "High Risk Alert"
+          : newScore >= 35
+          ? "Review Recommended"
+          : "Clean Claim";
+
+      if (onUpdateClaim) {
+        onUpdateClaim(claimId, {
+          riskScore: newScore,
+          carcCode: res.new_prediction?.predicted_carc_code || "CLEAN",
+          carcDescription:
+            res.new_prediction?.suggested_corrective_action ||
+            (res.new_prediction?.predicted_carc_code === "CLEAN"
+              ? "Claim validation passed with low denial risk. Ready for clean EDI submission."
+              : targetClaim?.carcDescription || "Pre-submission review recommended"),
+          status: (newScore >= 60 ? "denied" : "pending") as ClaimStatus,
+          documentationFlag: true,
+        });
+      }
+
+      toast.success(
+        `Claim re-scored: ${oldScore.toFixed(0)}% → ${newScore.toFixed(0)}% (${newTier})`,
+        {
+          description: `Attached '${file.name}'. Denial risk updated in real time.`,
+        }
+      );
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      toast.error("Upload failed", { description: err.message });
+    } finally {
+      setRescoringMap((prev) => {
+        const copy = { ...prev };
+        delete copy[claimId];
+        return copy;
+      });
+    }
+  };
 
   const filtered = useMemo(() => denials.filter((claim) => {
     const matchesPayer = payer === "all" || claim.payer === payer;
@@ -514,6 +635,13 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
 
   return (
     <div className="page-content worklist-page">
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
       <SectionHeading
         eyebrow="Revenue integrity / Active Queue"
         title="Denial worklist"
@@ -577,13 +705,15 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
                 <thead>
                   <tr>
                     <th style={{ width: 44, paddingLeft: 16 }}><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
-                    <th style={{ minWidth: 160 }}>Claim ID / Patient</th>
-                    <th style={{ minWidth: 130 }}>Payer</th>
-                    <th style={{ minWidth: 260 }}>CARC / Reason</th>
-                    <th className="text-right" style={{ minWidth: 120, textAlign: "right" }}>Denied Amt</th>
-                    <th style={{ minWidth: 100 }}>Deadline</th>
-                    <th style={{ minWidth: 100 }}>Status</th>
-                    <th style={{ minWidth: 130, paddingRight: 16 }}>Assigned</th>
+                    <th style={{ minWidth: 150 }}>Claim ID / Patient</th>
+                    <th style={{ minWidth: 120 }}>Payer</th>
+                    <th style={{ minWidth: 140 }}>Risk Tier</th>
+                    <th style={{ minWidth: 240 }}>CARC / Reason</th>
+                    <th className="text-right" style={{ minWidth: 110, textAlign: "right" }}>Denied Amt</th>
+                    <th style={{ minWidth: 90 }}>Deadline</th>
+                    <th style={{ minWidth: 90 }}>Status</th>
+                    <th style={{ minWidth: 95 }}>Evidence</th>
+                    <th style={{ minWidth: 120, paddingRight: 16 }}>Assigned</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -596,21 +726,36 @@ function Worklist({ denials, onOpenClaim, onScoreClaim }: { denials: Denial[]; o
                           onChange={() => setSelected(selected.includes(claim.id) ? selected.filter(id => id !== claim.id) : [...selected, claim.id])}
                         />
                       </td>
-                      <td style={{ minWidth: 160 }}>
+                      <td style={{ minWidth: 150 }}>
                         <strong className="block font-bold text-[#1E2F4D]">{claim.id}</strong>
                         <span className="subtle">{claim.patientRef} · {claim.cptCodes.join(", ")}</span>
                       </td>
-                      <td style={{ minWidth: 130 }} className="whitespace-nowrap font-medium text-[#1E2F4D]">{claim.payer}</td>
-                      <td style={{ minWidth: 260 }}>
+                      <td style={{ minWidth: 120 }} className="whitespace-nowrap font-medium text-[#1E2F4D]">{claim.payer}</td>
+                      <td style={{ minWidth: 140 }} className="whitespace-nowrap">
+                        <RiskBadge score={claim.riskScore} isRescoring={rescoringMap[claim.id]} />
+                      </td>
+                      <td style={{ minWidth: 240 }}>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="carc-code-tag">{claim.carcCode}</span>
                           <span className="subtle">{claim.carcDescription}</span>
                         </div>
                       </td>
-                      <td style={{ minWidth: 120 }} className="text-right font-mono font-bold text-[#1E2F4D] whitespace-nowrap">{money(claim.billedAmount)}</td>
-                      <td style={{ minWidth: 100 }} className="whitespace-nowrap"><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
-                      <td style={{ minWidth: 100 }} className="whitespace-nowrap"><StatusBadge status={claim.status} /></td>
-                      <td style={{ minWidth: 130, paddingRight: 16 }}>
+                      <td style={{ minWidth: 110 }} className="text-right font-mono font-bold text-[#1E2F4D] whitespace-nowrap">{money(claim.billedAmount)}</td>
+                      <td style={{ minWidth: 90 }} className="whitespace-nowrap"><span className="text-[11px] font-mono text-[#7C8A9C]">{claim.deadline}</span></td>
+                      <td style={{ minWidth: 90 }} className="whitespace-nowrap"><StatusBadge status={claim.status} /></td>
+                      <td style={{ minWidth: 95 }} className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-lg border border-[#D9E0E8] bg-white px-2 py-1 text-[11px] font-semibold text-[#48586B] hover:border-[#5B8CBF] hover:text-[#5B8CBF] transition shadow-2xs"
+                          disabled={rescoringMap[claim.id]}
+                          onClick={(e) => triggerUpload(e, claim.id)}
+                          title="Attach clinical documentation & re-score claim in real time"
+                        >
+                          <Paperclip size={12} className={rescoringMap[claim.id] ? "animate-spin text-[#5B8CBF]" : ""} />
+                          {rescoringMap[claim.id] ? "Scoring..." : "Upload"}
+                        </button>
+                      </td>
+                      <td style={{ minWidth: 120, paddingRight: 16 }}>
                         <div className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
                           <Avatar initials={claim.avatar} tone="blue" size="sm" />
                           <span>{claim.assignedTo}</span>
@@ -2212,6 +2357,8 @@ export default function Home() {
         submissionDate: row.submission_date || row.dos || row.created_at,
         dos: row.dos,
         actualOutcome: row.actual_outcome,
+        riskScore: row.predicted_risk_score !== undefined && row.predicted_risk_score !== null ? Number(row.predicted_risk_score) : undefined,
+        documentationFlag: Boolean(row.documentation_flag),
       }));
 
       setDenials(mappedDenials);
@@ -2260,6 +2407,10 @@ export default function Home() {
     setDenials(denials.map(d => d.id === id ? { ...d, status: newStatus } : d));
   };
 
+  const handleUpdateClaim = (id: string, patch: Partial<Denial>) => {
+    setDenials(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+  };
+
   const renderPage = () => {
     if (path === "/dashboard") return <Dashboard onNavigate={setLocation} denials={denials} appeals={appeals} />;
     if (path === "/predict") return <Predict onSaveClaim={handleSaveClaim} />;
@@ -2282,7 +2433,15 @@ export default function Home() {
     if (path === "/payers") return <Payers />;
     if (path === "/analytics") return <Analytics />;
     if (path === "/settings") return <SettingsView />;
-    return <Worklist denials={denials} onOpenClaim={(id) => setLocation(`/claims/${id}`)} onScoreClaim={() => setLocation("/predict")} />;
+    return (
+      <Worklist
+        denials={denials}
+        onOpenClaim={(id) => setLocation(`/claims/${id}`)}
+        onScoreClaim={() => setLocation("/predict")}
+        onUpdateClaim={handleUpdateClaim}
+        onRefresh={loadData}
+      />
+    );
   };
 
   return (

@@ -104,7 +104,8 @@ class ClaimLogRow(BaseModel):
     created_at: Optional[str] = None
 
 
-UserRole = Literal["Biller", "Analyst", "Admin", "Read-only"]
+UserRole = Literal["Biller", "Analyst", "Admin", "Read-only", "Denial Analyst"]
+UserRoleLiteral = Literal["Admin", "Analyst", "Biller", "Denial Analyst"]
 
 
 class LoginRequest(BaseModel):
@@ -116,6 +117,7 @@ class CreateAccountRequest(BaseModel):
     work_email: str
     password: str
     full_name: str
+    role: UserRoleLiteral
     invite_code: Optional[str] = None
     workspace_name: Optional[str] = None
 
@@ -159,6 +161,7 @@ class DocumentUploadResponse(BaseModel):
     document: ClaimDocumentItem
     repredicted: bool
     new_prediction: Optional[PredictionResponse] = None
+    updated_claim: Optional[ClaimLogRow] = None
 
 
 class CreateAppealRequest(BaseModel):

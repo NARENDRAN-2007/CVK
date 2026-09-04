@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS users (
     work_email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('Biller', 'Analyst', 'Admin', 'Read-only')),
+    role TEXT NOT NULL DEFAULT 'Biller' CHECK (role IN ('Admin', 'Analyst', 'Biller')),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -365,6 +365,37 @@ curl -X POST http://localhost:8000/auth/login \
 
 ---
 
+#### `POST /auth/register` (or `POST /auth/create-account`)
+Register a new user account with mandatory role selection and receive a signed JWT access token.
+
+- **Request Body:**
+```json
+{
+  "work_email": "newuser@northstar.health",
+  "password": "Password123!",
+  "full_name": "Jordan Lee",
+  "role": "Analyst",
+  "invite_code": "NORTHSTAR-A1B2"
+}
+```
+*Note: `role` is strictly required (`Admin`, `Analyst`, `Biller`, or `Denial Analyst`). Missing or invalid roles are rejected with `422 Unprocessable Entity`.*
+
+- **Response (`200 OK`):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "user": {
+    "email": "newuser@northstar.health",
+    "name": "Jordan Lee",
+    "role": "Analyst",
+    "workspace_id": "ws-northstar-001"
+  }
+}
+```
+
+---
+
 #### `GET /auth/me` (or `GET /me`)
 Retrieve current user session metadata from the Bearer token.
 
@@ -374,7 +405,8 @@ Retrieve current user session metadata from the Bearer token.
 {
   "email": "admin@denialguard.com",
   "name": "Alice Admin",
-  "role": "Admin"
+  "role": "Admin",
+  "workspace_id": "ws-northstar-001"
 }
 ```
 
@@ -585,11 +617,70 @@ Create a new clinical appeal for an existing claim.
 ```
 
 #### `POST /claims/{claim_id}/documents`
-Upload and persist clinical chart notes / PDF records in Supabase, automatically re-running the ML prediction model.
+Upload and persist clinical chart notes / PDF records in Supabase, automatically re-running the ML prediction model with `documentation_flag = True` and updating the claim in place.
 
 - **Headers:** `Authorization: Bearer <access_token>`
-- **Request Form:** `multipart/form-data` with `file: <Binary>` and `document_type: "operative_report"`
-- **Response (`200 OK`):** Returns uploaded document metadata (`id`, `storage_path`, `document_title`) and updated claim prediction.
+- **Request Form (`multipart/form-data`):**
+  - `file`: `<Binary File Data (PDF/TIFF/PNG/JPG)>`
+  - `document_type`: `"Operative Report"` (or `"Lab Results"`, `"Medical Necessity Letter"`, etc.)
+  - `notes`: `"Attached operative report from Date of Service"` *(optional)*
+- **Response (`200 OK`):**
+```json
+{
+  "status": "success",
+  "document": {
+    "id": "doc-a1b2c3d4",
+    "claim_id": "CLM-2026-08397",
+    "document_type": "Operative Report",
+    "document_title": "operative_report.pdf",
+    "storage_path": "claims/CLM-2026-08397/operative_report.pdf",
+    "uploaded_at": "2026-09-04T05:00:00.000000+00:00"
+  },
+  "updated_claim": {
+    "claim_id": "CLM-2026-08397",
+    "payer": "UnitedHealthcare",
+    "cpt_code": "27447",
+    "documentation_flag": true,
+    "predicted_risk_score": 26.5,
+    "predicted_carc_code": "CLEAN",
+    "updated_at": "2026-09-04T05:00:00.000000+00:00"
+  },
+  "new_prediction": {
+    "claim_id": "CLM-2026-08397",
+    "risk_score": 26.5,
+    "predicted_carc_code": "CLEAN",
+    "top_contributing_factors": [
+      {
+        "feature": "Clinical Documentation Attached",
+        "impact": -4.21,
+        "direction": "decreases_risk"
+      }
+    ],
+    "suggested_corrective_action": "Claim validation passed with low denial risk. Ready for clean EDI submission.",
+    "persisted": true
+  }
+}
+```
+
+---
+
+#### `GET /claims/{claim_id}/documents`
+Fetch all uploaded documents attached to a specific claim.
+
+- **Headers:** `Authorization: Bearer <access_token>`
+- **Response (`200 OK`):**
+```json
+[
+  {
+    "id": "doc-a1b2c3d4",
+    "claim_id": "CLM-2026-08397",
+    "document_type": "Operative Report",
+    "document_title": "operative_report.pdf",
+    "storage_path": "claims/CLM-2026-08397/operative_report.pdf",
+    "uploaded_at": "2026-09-04T05:00:00.000000+00:00"
+  }
+]
+```
 
 ---
 

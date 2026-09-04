@@ -18,6 +18,7 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [workspace, setWorkspace] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [role, setRole] = useState<"Admin" | "Denial Analyst" | "Biller" | "">("");
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -33,6 +34,10 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
     event.preventDefault();
     setFormError("");
     if (isCreate) {
+      if (!role) {
+        setFormError("Please select your account role to continue.");
+        return;
+      }
       const validationError = validateAccountForm({ password, confirmPassword, intent, inviteCode });
       if (validationError) {
         setFormError(validationError);
@@ -47,6 +52,7 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
           work_email: email,
           password,
           full_name: email.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+          role: role as "Admin" | "Denial Analyst" | "Biller",
           invite_code: intent === "join" ? inviteCode.trim().toUpperCase() : undefined,
           workspace_name: workspace.trim() || undefined,
         });
@@ -197,6 +203,23 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
                   className="h-11 w-full rounded-xl border border-[#D9E0E8] bg-[#FBFAF8] px-3 text-[13px] text-[#1E2F4D] outline-none focus:border-[#5B8CBF] focus:ring-2 focus:ring-[#DCEAF7]"
                 />
               </label>
+
+              {isCreate && (
+                <label className="mt-4 block">
+                  <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.13em] text-[#7C8A9C]">Account role</span>
+                  <select
+                    value={role}
+                    onChange={(event) => setRole(event.target.value as any)}
+                    required
+                    className="h-11 w-full rounded-xl border border-[#D9E0E8] bg-[#FBFAF8] px-3 text-[13px] text-[#1E2F4D] outline-none focus:border-[#5B8CBF] focus:ring-2 focus:ring-[#DCEAF7]"
+                  >
+                    <option value="" disabled>Select role...</option>
+                    <option value="Admin">Admin · Full administration & compliance logs</option>
+                    <option value="Denial Analyst">Denial Analyst · Risk analysis & clinical appeals</option>
+                    <option value="Biller">Biller · Pre-submission scoring & claim triage</option>
+                  </select>
+                </label>
+              )}
 
               <div className={isCreate ? "mt-4 grid gap-4 sm:grid-cols-2" : "mt-4"}>
                 <label className="block">

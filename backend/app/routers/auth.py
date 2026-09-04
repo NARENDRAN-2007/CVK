@@ -73,7 +73,7 @@ async def register(request: CreateAccountRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="An account with this work email already exists")
 
     target_workspace_id = None
-    target_role = "Admin"
+    target_role = request.role or "Admin"
 
     if request.invite_code:
         status_code, invite = validate_workspace_invite(request.invite_code)
@@ -85,14 +85,15 @@ async def register(request: CreateAccountRequest):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invite code has already been used")
 
         target_workspace_id = invite.get("workspace_id")
-        target_role = invite.get("role", "Analyst")
+        raw_role = request.role or invite.get("role", "Analyst")
+        target_role = "Analyst" if raw_role == "Denial Analyst" else raw_role
         mark_workspace_invite_used(request.invite_code)
     else:
         target_workspace_id = f"ws-{uuid.uuid4().hex[:8]}"
-        target_role = "Admin"
+        target_role = "Analyst" if request.role == "Denial Analyst" else request.role
 
     pw_hash = get_password_hash(request.password)
-    user_id = f"usr-{uuid.uuid4().hex[:8]}"
+    user_id = str(uuid.uuid4())
     new_user_data = {
         "id": user_id,
         "work_email": normalized_email,

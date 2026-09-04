@@ -3,9 +3,9 @@ from datetime import datetime, date, timezone
 from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
-from ..schemas import DocumentUploadResponse, ClaimDocumentItem, PredictionResponse, ClaimInput
+from ..schemas import DocumentUploadResponse, ClaimDocumentItem, PredictionResponse, ClaimInput, ClaimLogRow
 from ..db import insert_claim_document, get_claim_documents, get_claim_by_id, upsert_claim_log, insert_notification
-from ..model.predict import predict_claim
+from ..model.predict import predict_claim, HIGH_RISK_ALERT_THRESHOLD
 from ..core.deps import get_current_user
 
 router = APIRouter(prefix="/claims", tags=["Documents"])
@@ -38,6 +38,7 @@ async def upload_document(
 
     existing_claim = get_claim_by_id(claim_id)
     new_prediction_obj: Optional[PredictionResponse] = None
+    updated_claim_obj: Optional[ClaimLogRow] = None
 
     if existing_claim:
         claim_input = ClaimInput(
@@ -67,6 +68,8 @@ async def upload_document(
         api_res = res["api_response"]
         full_rec = res["full_record"]
         full_rec["workspace_id"] = workspace_id
+        full_rec["documentation_flag"] = True
+        full_rec["updated_at"] = now_iso
 
         new_prediction_obj = PredictionResponse(**api_res)
 
@@ -78,6 +81,16 @@ async def upload_document(
                 f"[Documents] Re-evaluated claim {claim_id} but failed to persist updated record to Supabase."
             )
 
+        if new_prediction_obj.risk_score >= HIGH_RISK_ALERT_THRESHOLD:
+            carc = new_prediction_obj.predicted_carc_code or "CO-16"
+            insert_notification({
+                "workspace_id": workspace_id,
+                "title": f"High Denial Risk: {claim_id}",
+                "message": f"Pre-submission risk evaluated at {new_prediction_obj.risk_score:.1f}% ({carc}). Action required.",
+                "type": "high_risk",
+                "link": f"/claims/{claim_id}"
+            })
+
         insert_notification({
             "workspace_id": workspace_id,
             "title": f"Document Attached: {claim_id}",
@@ -85,6 +98,11 @@ async def upload_document(
             "type": "document",
             "link": f"/claims/{claim_id}"
         })
+
+        try:
+            updated_claim_obj = ClaimLogRow(**existing_claim)
+        except Exception:
+            pass
 
     return DocumentUploadResponse(
         status="success",
@@ -97,7 +115,8 @@ async def upload_document(
             uploaded_at=now_iso
         ),
         repredicted=bool(new_prediction_obj is not None),
-        new_prediction=new_prediction_obj
+        new_prediction=new_prediction_obj,
+        updated_claim=updated_claim_obj
     )
 
 

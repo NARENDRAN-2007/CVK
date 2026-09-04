@@ -140,6 +140,7 @@ export async function registerUser(payload: {
   work_email: string;
   password: string;
   full_name: string;
+  role: "Admin" | "Denial Analyst" | "Biller";
   invite_code?: string;
   workspace_name?: string;
 }): Promise<{ access_token: string; token_type: string; user: UserProfile }> {
@@ -272,7 +273,7 @@ export async function uploadClaimDocument(
   claimId: string,
   file: File,
   documentType: string = "clinical_chart_note"
-): Promise<{ status: string; document: any; repredicted: boolean; new_prediction?: any }> {
+): Promise<{ status: string; document: any; repredicted: boolean; new_prediction?: any; updated_claim?: any }> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("document_type", documentType);
